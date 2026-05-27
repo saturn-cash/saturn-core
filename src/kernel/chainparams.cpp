@@ -98,8 +98,8 @@ public:
         consensus.CSVHeight = 419328; // 000000000000000004a1b34462cb8aeebd5799177f7a29cf28f2d1961716b5b5
         consensus.SegwitHeight = 481824; // 0000000000000000001c8018d9cb3b742ef25114f27563e3fc4a1902167f9893
         consensus.MinBIP9WarningHeight = 711648; // taproot activation height + miner confirmation window
-        consensus.powLimit = uint256{"0000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"};
-        consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
+        consensus.powLimit = uint256{"00000007ffff0000000000000000000000000000000000000000000000000000"};
+        consensus.nPowTargetTimespan = 10 * 60; // retarget every block
         consensus.nPowTargetSpacing = 10 * 60;
         consensus.fPowAllowMinDifficultyBlocks = false;
         consensus.enforce_BIP94 = false;
@@ -128,9 +128,9 @@ public:
         m_assumed_blockchain_size = 856;
         m_assumed_chain_state_size = 14;
 
-        genesis = CreateGenesisBlock(1779650000, 59259, 0x1f00ffff, 1, 50 * COIN);
+        genesis = CreateGenesisBlock(1779650000, 79918425, 0x1d07ffff, 1, 50 * COIN);
         consensus.hashGenesisBlock = genesis.GetHash();
-                assert(consensus.hashGenesisBlock == uint256{"00006a5039b3c988c24228f9b84f38bbce3f8085543d79685fe12007677a7d21"});
+                assert(consensus.hashGenesisBlock == uint256{"00000003c7e577ae8d7adbb9281b0a045f8f8036c910d4674cec2835767beb35"});
         assert(genesis.hashMerkleRoot == uint256{"c1816ee7da493c4621b77ab32a3dcccfefc48ebf6186649ad9901cd5b34ff0c9"});
 
         // Note that of those which support the service bits prefix, most only support a subset of

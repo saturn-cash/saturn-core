@@ -7,7 +7,7 @@ security updates: https://saturncore.org/en/lifecycle/#schedule
 
 ## Reporting a Vulnerability
 
-To report security issues send an email to security@saturncore.org (not for support).
+To report security issues send an email to security@saturn.boats (not for support).
 
 The following keys may be used to communicate sensitive information to developers:
 

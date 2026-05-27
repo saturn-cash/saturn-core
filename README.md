@@ -5,7 +5,7 @@ This pull request establishes the new Saturn mainnet with a unique Saturn genesi
 ### Summary
 
 * Introduces the official Saturn genesis block:
-  `00006a5039b3c988c24228f9b84f38bbce3f8085543d79685fe12007677a7d21`
+  `00000003c7e577ae8d7adbb9281b0a045f8f8036c910d4674cec2835767beb35`
 * Updates Saturn network configuration and seed infrastructure.
 * Refreshes Saturn branding across documentation and user-facing components.
 * Removes dependency on previous Saturn chain history and establishes a clean network launch baseline.

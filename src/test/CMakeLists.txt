@@ -81,6 +81,7 @@ add_executable(test_saturn
   pmt_tests.cpp
   pool_tests.cpp
   pow_tests.cpp
+  saturn_lwma_tests.cpp
   prevector_tests.cpp
   private_broadcast_tests.cpp
   psbt_tests.cpp

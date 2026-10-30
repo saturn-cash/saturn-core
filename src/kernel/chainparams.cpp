@@ -130,6 +130,11 @@ public:
         consensus.MinBIP9WarningHeight = 711648; // taproot activation height + miner confirmation window
         consensus.powLimit = uint256{"00000007ffff0000000000000000000000000000000000000000000000000000"};
         consensus.nPowTargetTimespan = 10 * 60; // retarget every block
+        // Bitcoin's retarget with a one-block interval multiplies difficulty by 4 every block (it
+        // measures zero elapsed time). From block 7 Saturn uses LWMA, starting at difficulty 65536.
+        consensus.nLWMAHeight = 7;
+        consensus.nLWMAWindow = 45;
+        consensus.nLWMAStartBits = 0x1b00ffff;
         consensus.nPowTargetSpacing = 10 * 60;
         consensus.fPowAllowMinDifficultyBlocks = false;
         consensus.enforce_BIP94 = false;

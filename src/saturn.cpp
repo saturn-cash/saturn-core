@@ -23,14 +23,14 @@ const TranslateFn G_TRANSLATION_FUN{nullptr};
 static constexpr auto HELP_USAGE = R"(Usage: %s [OPTIONS] COMMAND...
 
 Options:
-  -m, --multiprocess     Run multiprocess binaries saturn-node, saturn-gui.
+  -m, --multiprocess     Run multiprocess binaries saturnd, saturn-gui.
   -M, --monolithic       Run monolithic binaries saturnd, saturn-qt. (Default behavior)
   -v, --version          Show version information
   -h, --help             Show full help message
 
 Commands:
   gui [ARGS]     Start GUI, equivalent to running 'saturn-qt [ARGS]' or 'saturn-gui [ARGS]'.
-  node [ARGS]    Start node, equivalent to running 'saturnd [ARGS]' or 'saturn-node [ARGS]'.
+  node [ARGS]    Start node, equivalent to running 'saturnd [ARGS]' or 'saturnd [ARGS]'.
   rpc [ARGS]     Call RPC method, equivalent to running 'saturn-cli -named [ARGS]'.
   wallet [ARGS]  Call wallet command, equivalent to running 'saturn-wallet [ARGS]'.
   tx [ARGS]      Manipulate hex-encoded transactions, equivalent to running 'saturn-tx [ARGS]'.
@@ -86,7 +86,7 @@ int main(int argc, char* argv[])
         } else if (cmd.command == "gui") {
             args.emplace_back(UseMultiprocess(cmd) ? "saturn-gui" : "saturn-qt");
         } else if (cmd.command == "node") {
-            args.emplace_back(UseMultiprocess(cmd) ? "saturn-node" : "saturnd");
+            args.emplace_back(UseMultiprocess(cmd) ? "saturnd" : "saturnd");
         } else if (cmd.command == "rpc") {
             args.emplace_back("saturn-cli");
             // Since "saturn rpc" is a new interface that doesn't need to be

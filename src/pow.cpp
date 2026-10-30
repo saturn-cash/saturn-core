@@ -11,10 +11,16 @@
 #include <uint256.h>
 #include <util/check.h>
 
+#include <algorithm>
+
 unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHeader *pblock, const Consensus::Params& params)
 {
     assert(pindexLast != nullptr);
     unsigned int nProofOfWorkLimit = UintToArith256(params.powLimit).GetCompact();
+
+    if (pindexLast->nHeight + 1 >= params.nLWMAHeight) {
+        return LwmaNextWorkRequired(pindexLast, params);
+    }
 
     // Only change once per difficulty adjustment interval
     if ((pindexLast->nHeight+1) % params.DifficultyAdjustmentInterval() != 0)
@@ -45,6 +51,73 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
     assert(pindexFirst);
 
     return CalculateNextWorkRequired(pindexLast, pindexFirst->GetBlockTime(), params);
+}
+
+/*
+ * LWMA-1 (zawy12), Saturn variant. The next target is the average target of the last N blocks,
+ * scaled by their linearly weighted mean solve time over the target spacing, so recent blocks
+ * count most. Solve times are made monotonic and capped at 6x spacing so bad timestamps cannot
+ * swing difficulty far.
+ *
+ * Window slots that fall before nLWMAHeight are filled with synthetic ideal blocks (solve time =
+ * spacing, target = nLWMAStartBits), so the algorithm starts smoothly from nLWMAStartBits instead
+ * of from the pre-fork history. The first LWMA block itself uses nLWMAStartBits.
+ */
+unsigned int LwmaNextWorkRequired(const CBlockIndex* pindexLast, const Consensus::Params& params)
+{
+    assert(pindexLast != nullptr);
+    const int64_t T = params.nPowTargetSpacing;
+    const int64_t N = params.nLWMAWindow;
+    const int64_t fork = params.nLWMAHeight;
+    const int64_t next_height = int64_t{pindexLast->nHeight} + 1;
+    const arith_uint256 pow_limit = UintToArith256(params.powLimit);
+
+    arith_uint256 start_target;
+    start_target.SetCompact(params.nLWMAStartBits);
+    if (start_target == 0 || start_target > pow_limit) start_target = pow_limit;
+
+    if (next_height <= fork) return start_target.GetCompact();
+
+    // weighted sum of solve times, and sum of targets / (k * N) as in the reference implementation
+    const int64_t k = N * (N + 1) * T / 2;
+    int64_t weighted_time = 0;
+    arith_uint256 sum_target;
+    // timestamp of the block just before the window; only used once the window is entirely past the
+    // fork (otherwise the fork block, which is inside the window, sets it)
+    int64_t prev_time = 0;
+    if (next_height - N - 1 >= fork) {
+        prev_time = pindexLast->GetAncestor(next_height - N - 1)->GetBlockTime();
+    }
+    for (int64_t j = 1; j <= N; ++j) {
+        const int64_t h = next_height - N + j - 1; // heights next_height-N .. next_height-1
+        int64_t solvetime;
+        arith_uint256 target;
+        if (h <= fork) {
+            // before (or at) the switch: ideal block at the start target. The fork block's own solve
+            // time is measured against pre-fork history and is meaningless, so it is synthetic too.
+            solvetime = T;
+            target = start_target;
+            if (h == fork) {
+                prev_time = pindexLast->GetAncestor(h)->GetBlockTime();
+                target.SetCompact(pindexLast->GetAncestor(h)->nBits);
+            }
+        } else {
+            const CBlockIndex* block = pindexLast->GetAncestor(h);
+            assert(block);
+            const int64_t this_time = std::max<int64_t>(block->GetBlockTime(), prev_time + 1);
+            solvetime = std::min<int64_t>(6 * T, this_time - prev_time);
+            prev_time = this_time;
+            target.SetCompact(block->nBits);
+        }
+        weighted_time += solvetime * j;
+        sum_target += target / arith_uint256(static_cast<uint64_t>(k * N));
+    }
+    // guard against a degenerate window (cannot happen with the monotonic fix, but keep it safe)
+    if (weighted_time < k / 10) weighted_time = k / 10;
+
+    arith_uint256 next_target = sum_target * arith_uint256(static_cast<uint64_t>(weighted_time));
+    if (next_target > pow_limit || next_target == 0) next_target = pow_limit;
+    return next_target.GetCompact();
 }
 
 unsigned int CalculateNextWorkRequired(const CBlockIndex* pindexLast, int64_t nFirstBlockTime, const Consensus::Params& params)
@@ -89,6 +162,9 @@ unsigned int CalculateNextWorkRequired(const CBlockIndex* pindexLast, int64_t nF
 bool PermittedDifficultyTransition(const Consensus::Params& params, int64_t height, uint32_t old_nbits, uint32_t new_nbits)
 {
     if (params.fPowAllowMinDifficultyBlocks) return true;
+    // LWMA can move difficulty by more than Bitcoin's 4x per period; the exact value is still
+    // enforced by ContextualCheckBlockHeader. This check is only an anti-DoS bound for header presync.
+    if (height >= params.nLWMAHeight) return true;
 
     if (height % params.DifficultyAdjustmentInterval() == 0) {
         int64_t smallest_timespan = params.nPowTargetTimespan/4;

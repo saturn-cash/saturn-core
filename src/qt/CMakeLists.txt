@@ -16,7 +16,7 @@ get_target_property(qt_lib_type Qt6::Core TYPE)
 function(import_plugins target)
   if(qt_lib_type STREQUAL "STATIC_LIBRARY")
     set(plugins Qt6::QMinimalIntegrationPlugin)
-    if(CMAKE_SYSTEM_NAME MATCHES "^(Linux|FreeBSD)$")
+    if(CMAKE_SYSTEM_NAME MATCHES "^(Linux|FreeBSD|OpenBSD)$")
       list(APPEND plugins Qt6::QXcbIntegrationPlugin)
     elseif(WIN32)
       list(APPEND plugins Qt6::QWindowsIntegrationPlugin Qt6::QModernWindowsStylePlugin)
@@ -255,12 +255,12 @@ endif()
 
 add_subdirectory(locale)
 
-add_executable(saturn-qt
+add_executable(saturn-qt WIN32
   main.cpp
+  res/saturn-qt-res.rc
   ../init/saturn-qt.cpp
 )
 
-add_windows_resources(saturn-qt res/saturn-qt-res.rc)
 add_windows_application_manifest(saturn-qt)
 
 target_link_libraries(saturn-qt
@@ -271,12 +271,9 @@ target_link_libraries(saturn-qt
 
 import_plugins(saturn-qt)
 install_binary_component(saturn-qt HAS_MANPAGE)
-if(WIN32)
-  set_target_properties(saturn-qt PROPERTIES WIN32_EXECUTABLE TRUE)
-endif()
 
 if(ENABLE_IPC)
-  add_executable(saturn-gui
+  add_executable(saturn-gui WIN32
     main.cpp
     ../init/saturn-gui.cpp
   )
@@ -288,9 +285,6 @@ if(ENABLE_IPC)
   )
   import_plugins(saturn-gui)
   install_binary_component(saturn-gui INTERNAL)
-  if(WIN32)
-    set_target_properties(saturn-gui PROPERTIES WIN32_EXECUTABLE TRUE)
-  endif()
 endif()
 
 if(BUILD_GUI_TESTS)
@@ -306,7 +300,6 @@ else()
   add_custom_target(translate COMMAND ${CMAKE_COMMAND}
     -D "PROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
     -D "COPYRIGHT_HOLDERS=${COPYRIGHT_HOLDERS}"
-    -D "LCONVERT_EXECUTABLE=$<TARGET_FILE:Qt6::lconvert>"
     -D "LUPDATE_EXECUTABLE=$<TARGET_FILE:Qt6::lupdate>"
     -D "XGETTEXT_EXECUTABLE=${XGETTEXT_EXECUTABLE}"
     -P ${PROJECT_SOURCE_DIR}/share/qt/translate.cmake

@@ -9,8 +9,8 @@ extern "C" {
 #endif
 
 /** This module implements a variant of Schnorr signatures compliant with
- *  Saturn Improvement Proposal 340 "Schnorr Signatures for secp256k1"
- *  (https://github.com/saturn/bips/blob/master/bip-0340.mediawiki).
+ *  Bitcoin Improvement Proposal 340 "Schnorr Signatures for secp256k1"
+ *  (https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki).
  */
 
 /** A pointer to a function to deterministically generate a nonce.
@@ -49,9 +49,9 @@ typedef int (*secp256k1_nonce_function_hardened)(
     void *data
 );
 
-/** An implementation of the nonce generation function as defined in Saturn
+/** An implementation of the nonce generation function as defined in Bitcoin
  *  Improvement Proposal 340 "Schnorr Signatures for secp256k1"
- *  (https://github.com/saturn/bips/blob/master/bip-0340.mediawiki).
+ *  (https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki).
  *
  *  If a data pointer is passed, it is assumed to be a pointer to 32 bytes of
  *  auxiliary random data as defined in BIP-340. If the data pointer is NULL,
@@ -124,20 +124,9 @@ SECP256K1_API int secp256k1_schnorrsig_sign32(
     const unsigned char *aux_rand32
 ) SECP256K1_ARG_NONNULL(1) SECP256K1_ARG_NONNULL(2) SECP256K1_ARG_NONNULL(3) SECP256K1_ARG_NONNULL(4);
 
-/** Same as secp256k1_schnorrsig_sign32, but DEPRECATED. Will be removed in
- *  future versions. */
-SECP256K1_API int secp256k1_schnorrsig_sign(
-    const secp256k1_context *ctx,
-    unsigned char *sig64,
-    const unsigned char *msg32,
-    const secp256k1_keypair *keypair,
-    const unsigned char *aux_rand32
-) SECP256K1_ARG_NONNULL(1) SECP256K1_ARG_NONNULL(2) SECP256K1_ARG_NONNULL(3) SECP256K1_ARG_NONNULL(4)
-  SECP256K1_DEPRECATED("Use secp256k1_schnorrsig_sign32 instead");
-
 /** Create a Schnorr signature with a more flexible API.
  *
- *  Same arguments as secp256k1_schnorrsig_sign except that it allows signing
+ *  Same arguments as secp256k1_schnorrsig_sign32 except that it allows signing
  *  variable length messages and accepts a pointer to an extraparams object that
  *  allows customizing signing by passing additional arguments.
  *

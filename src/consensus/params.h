@@ -11,6 +11,7 @@
 
 #include <array>
 #include <chrono>
+#include <cstdint>
 #include <limits>
 #include <map>
 #include <vector>
@@ -127,6 +128,17 @@ struct Params {
         return std::chrono::seconds{nPowTargetSpacing};
     }
     int64_t DifficultyAdjustmentInterval() const { return nPowTargetTimespan / nPowTargetSpacing; }
+    /**
+     * Saturn: from this height on, difficulty is set every block by LWMA (linearly weighted moving
+     * average of the last nLWMAWindow solve times) instead of Bitcoin's retarget. Bitcoin's
+     * algorithm with a one-block interval measures zero elapsed time and multiplies difficulty by
+     * 4 on every block. std::numeric_limits<int>::max() disables LWMA.
+     */
+    int nLWMAHeight{std::numeric_limits<int>::max()};
+    /** Number of past blocks LWMA averages over. */
+    int64_t nLWMAWindow{45};
+    /** Target (compact) for the first LWMA block; earlier window slots are treated as ideal blocks at this target. */
+    uint32_t nLWMAStartBits{0};
     /** The best chain should have at least this much work */
     uint256 nMinimumChainWork;
     /** By default assume that the signatures in ancestors of this block are valid */

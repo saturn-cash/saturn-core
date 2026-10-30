@@ -632,10 +632,12 @@ public:
 
         ApplyDeploymentOptions(opts.dep_opts);
 
-        genesis = CreateGenesisBlock(1296688602, 2, 0x207fffff, 1, 50 * COIN);
+        // Saturn's genesis message changed the merkle root, so Bitcoin's regtest nonce (2) no longer
+        // meets the regtest target and the node could not start. Nonce 0 does.
+        genesis = CreateGenesisBlock(1296688602, 0, 0x207fffff, 1, 50 * COIN);
         consensus.hashGenesisBlock = genesis.GetHash();
-        //assert(consensus.hashGenesisBlock == uint256{"0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206"});
-        //assert(genesis.hashMerkleRoot == uint256{"c1816ee7da493c4621b77ab32a3dcccfefc48ebf6186649ad9901cd5b34ff0c9"});
+        assert(consensus.hashGenesisBlock == uint256{"47e1d27fe36810455d8c50133748022675b51d409391ddf1e5b458aec93d9773"});
+        assert(genesis.hashMerkleRoot == uint256{"c1816ee7da493c4621b77ab32a3dcccfefc48ebf6186649ad9901cd5b34ff0c9"});
 
         vFixedSeeds.clear(); //!< Regtest mode doesn't have any fixed seeds.
         vSeeds.clear();

@@ -31,8 +31,8 @@ if(BUILD_TESTS)
   # compiler only allows importing by relative path when the importing and
   # imported files are underneath the same compilation source prefix, so the
   # source prefix must be src/ipc, not src/ipc/test/
-  add_library(saturn_ipc_test STATIC EXCLUDE_FROM_ALL
-    test/ipc_test.cpp
+  add_library(saturn_ipc_test OBJECT EXCLUDE_FROM_ALL
+    test/ipc_tests.cpp
   )
   target_capnp_sources(saturn_ipc_test ${CMAKE_CURRENT_SOURCE_DIR}
     test/ipc_test.capnp
@@ -40,6 +40,21 @@ if(BUILD_TESTS)
   add_dependencies(saturn_ipc_test saturn_ipc_headers)
 
   target_link_libraries(saturn_ipc_test
+    PRIVATE
+      core_interface
+      univalue
+      Boost::headers
+  )
+endif()
+
+if (BUILD_FUZZ_BINARY)
+  add_library(saturn_ipc_fuzz STATIC EXCLUDE_FROM_ALL)
+  target_capnp_sources(saturn_ipc_fuzz ${CMAKE_CURRENT_SOURCE_DIR}
+    test/fuzz/ipc_fuzz.capnp
+  )
+  add_dependencies(saturn_ipc_fuzz saturn_ipc_headers)
+
+  target_link_libraries(saturn_ipc_fuzz
     PRIVATE
       core_interface
       univalue

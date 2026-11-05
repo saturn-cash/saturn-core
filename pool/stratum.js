@@ -1,4 +1,4 @@
-// Saturn pool: stratum v1 server.
+// Saturn pool: stratum v1 server, pool website and light-wallet API.
 //
 // Miners get unique extranonce1 values, per-connection variable difficulty and BIP310 version rolling
 // (Bitaxe/ESP-Miner uses it). Every share is checked against its share target; shares that also meet
@@ -6,8 +6,18 @@
 // and the segwit witness commitment) and submitted to Saturn Core. New work is pushed to all miners
 // when the chain tip changes.
 //
-// Kept from the previous version: config.json, the pool payout script, data/*.json files and the
-// stats API on :8081, so server.js and payout.js keep working unchanged.
+// Payouts are PPLNS: a block's reward is split over the last N shares' worth of work (N = pplnsFactor
+// x the block difficulty), not just the work since the previous block, so hopping in and out of the
+// pool doesn't pay. Miners who log in with the password "solo" mine blocks that pay their own address
+// the whole reward. payout.js pays rounds once they unlock.
+//
+// Files (in dataDir, default ./data). Each file has exactly one writer:
+//   written here:      stats.json (work this round), workers.json (all-time), blocks.json, rounds.json,
+//                      pplns.json (the share window), history.json, guard.json (reorg alarm)
+//   written by payout: payouts.json (owed, paid, settled rounds)
+//
+// Abuse limits: connections per IP, login and idle timeouts, a cap on line length, temporary bans for
+// clients that send mostly junk, and per-IP rate limits on the HTTP API.
 
 const net = require("net");
 const http = require("http");
@@ -16,7 +26,11 @@ const path = require("path");
 const fetch = require("node-fetch");
 const crypto = require("crypto");
 
-const config = JSON.parse(fs.readFileSync("./config.json"));
+const CONFIG_FILE = process.env.SATURN_POOL_CONFIG || "./config.json";
+const config = JSON.parse(fs.readFileSync(CONFIG_FILE));
+const DATA = config.dataDir || process.env.SATURN_POOL_DATA || "./data";
+fs.mkdirSync(DATA, { recursive: true });
+const dataFile = (name) => path.join(DATA, name);
 
 // Everything a block pays goes to the pool wallet; payout.js forwards miners' shares from there.
 // address prefix miners log in with ("bcrt" lets the pool run against a regtest chain for testing)
@@ -32,10 +46,23 @@ const MAX_DIFF = config.maxDifficulty || 2 ** 32;
 const TARGET_SHARE_SECONDS = config.targetShareSeconds || 10;
 const RETARGET_SECONDS = 60;
 
+// PPLNS window: this many blocks' worth of work (at the current block difficulty)
+const PPLNS_FACTOR = Number(config.pplnsFactor ?? 2);
+
+// abuse limits
+const MAX_CONNECTIONS = Number(config.maxConnections ?? 20000);
+const MAX_PER_IP = Number(config.maxConnectionsPerIp ?? 64); // a farm behind one router needs room
+const LOGIN_TIMEOUT_MS = 30_000;
+const IDLE_TIMEOUT_MS = 15 * 60_000;
+const MAX_LINE = 16 * 1024;
+const BAN_MS = 10 * 60_000;
+
+// reorg alarm: a chain reorganisation at least this deep pauses payouts until someone checks
+const REORG_ALERT_DEPTH = Number(config.reorgAlertDepth ?? 6);
+
 const VERSION_ROLLING_MASK = 0x1fffe000;
 const DIFF1_TARGET = 0xffffn << 208n;
 
-let miners = 0;
 let template = null; // latest getblocktemplate result
 let nextJobId = 1;
 let nextExtranonce1 = crypto.randomBytes(2).readUInt16BE() << 8; // random start so restarts don't reuse values
@@ -43,7 +70,7 @@ const jobs = new Map(); // jobId -> job
 const clients = new Set();
 
 /* ------------------------------------------------------------------ */
-/* data files (same format as before)                                  */
+/* data: kept in memory, written to disk in the background             */
 /* ------------------------------------------------------------------ */
 
 function readJson(file, fallback) {
@@ -53,90 +80,203 @@ function readJson(file, fallback) {
     return fallback;
   }
 }
-
-function recordBlock(worker, height, reward, hash, solo = false) {
-  const workers = readJson("./data/workers.json", {});
-  if (workers[worker]) {
-    workers[worker].blocks = (workers[worker].blocks || 0) + 1;
-    fs.writeFileSync("./data/workers.json", JSON.stringify(workers, null, 2));
-  }
-  const file = "./data/blocks.json";
-  const blocks = readJson(file, []);
-  blocks.unshift({ height, miner: worker, reward, hash, time: new Date().toISOString(), ...(solo ? { solo: true } : {}) });
-  fs.writeFileSync(file, JSON.stringify(blocks.slice(0, 25), null, 2));
+// write to a temp file and rename it over the old one, so a crash never leaves half a file
+function writeJsonAtomic(file, value, pretty = false) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, pretty ? JSON.stringify(value, null, 2) : JSON.stringify(value));
+  fs.renameSync(tmp, file);
 }
 
-// Split a found block's reward over everyone's work since the previous block, by share difficulty,
-// and record it as a "round". payout.js pays a round once its reward has unlocked (101
-// confirmations) and the block is still in the chain. `pending` (shown on the site and in the app)
-// is everything a miner is owed: unlocked-but-unpaid plus still-maturing.
-function creditPayouts(rewardSat, height, hash) {
-  const statsFile = "./data/stats.json";
-  const payoutsFile = "./data/payouts.json";
-  const stats = readJson(statsFile, { totalShares: 0, miners: {} });
-  const payouts = readJson(payoutsFile, {});
-  const totalShares = stats.totalShares || 0;
-  if (!totalShares || !stats.miners) {
-    console.log("payout skipped: no shares recorded");
-    return;
-  }
-  // older pools kept a running "pending" total with no block behind each entry: set it aside
-  if (!payouts.migrated) {
-    if (payouts.pending && Object.keys(payouts.pending).length && !(payouts.rounds || []).length) payouts.legacyPending = payouts.pending;
-    payouts.migrated = new Date().toISOString();
-  }
-  const credits = {};
-  for (const worker of Object.keys(stats.miners)) {
-    const shares = stats.miners[worker].shares || 0;
-    if (!shares) continue;
-    const address = worker.split(".")[0];
-    credits[address] = (credits[address] || 0) + (shares / totalShares) * rewardSat;
-  }
-  for (const a of Object.keys(credits)) credits[a] = Math.floor(credits[a] * 1e8) / 1e8; // never promise more than the block paid
-  payouts.rounds = payouts.rounds || [];
-  payouts.rounds.push({ height, hash, reward: rewardSat, credits, status: "immature", time: new Date().toISOString() });
-  payouts.lastCredit = { rewardSat, totalShares, height, time: new Date().toISOString() };
-  fs.writeFileSync(payoutsFile, JSON.stringify(withPending(payouts), null, 2));
-  fs.writeFileSync(statsFile, JSON.stringify({ totalShares: 0, miners: {} }, null, 2));
-  console.log("payouts credited:", payouts.lastCredit);
+const roundId = (r) => `${r.height}:${r.hash}`;
+const round8 = (v) => Math.round(v * 1e8) / 1e8;
+
+// rounds used to live inside payouts.json; the first start of this version moves them out (payout.js
+// does the same if it starts first, so whichever runs first, nothing is lost)
+function loadRounds() {
+  const f = dataFile("rounds.json");
+  if (fs.existsSync(f)) return readJson(f, []);
+  const old = (readJson(dataFile("payouts.json"), {}).rounds || []).map(({ status, ...r }) => r);
+  writeJsonAtomic(f, old);
+  return old;
 }
 
-// pending = owed (unlocked, not yet paid) + credits of rounds still maturing
-function withPending(payouts) {
-  const pending = {};
-  for (const [a, v] of Object.entries(payouts.owed || {})) pending[a] = (pending[a] || 0) + v;
-  for (const r of payouts.rounds || []) if (r.status === "immature") for (const [a, v] of Object.entries(r.credits)) pending[a] = (pending[a] || 0) + v;
-  for (const a of Object.keys(pending)) pending[a] = Math.round(pending[a] * 1e8) / 1e8;
-  payouts.pending = pending;
-  return payouts;
+const db = {
+  stats: readJson(dataFile("stats.json"), { totalShares: 0, miners: {} }),
+  workers: readJson(dataFile("workers.json"), null),
+  blocks: readJson(dataFile("blocks.json"), []),
+  rounds: loadRounds(),
+  history: readJson(dataFile("history.json"), []).filter(([t]) => t > Date.now() - 86_400_000),
+  guard: readJson(dataFile("guard.json"), { paused: null, reorgs: [] }),
+};
+// first run with the all-time worker list: seed it from the current round and the blocks found so far
+if (!db.workers) {
+  db.workers = {};
+  for (const [w, m] of Object.entries(db.stats.miners || {})) db.workers[w] = { work: m.shares || 0, shares: 0, blocks: 0, lastShare: m.lastShare };
+  for (const b of db.blocks) if (db.workers[b.miner]) db.workers[b.miner].blocks++;
+}
+
+const dirty = new Set();
+function save(name, now = false) {
+  dirty.add(name);
+  if (now) flush();
+}
+function flush() {
+  for (const name of dirty) {
+    try {
+      if (name === "pplns") writeJsonAtomic(dataFile("pplns.json"), { shares: pplns.slice(pplnsHead) });
+      else writeJsonAtomic(dataFile(`${name}.json`), db[name], name === "blocks" || name === "guard");
+    } catch (e) {
+      console.error(`couldn't save ${name}:`, e.message);
+      continue;
+    }
+    dirty.delete(name);
+  }
+}
+setInterval(flush, 10_000);
+for (const sig of ["SIGTERM", "SIGINT"])
+  process.on(sig, () => {
+    flush();
+    process.exit(0);
+  });
+
+/* ------------------------------------------------------------------ */
+/* shares, blocks and PPLNS                                            */
+/* ------------------------------------------------------------------ */
+
+// the window: [address, work, time] oldest first; entries before pplnsHead are already dropped
+let pplns = (readJson(dataFile("pplns.json"), { shares: [] }).shares || []).filter((e) => Array.isArray(e) && e[1] > 0);
+let pplnsHead = 0;
+let pplnsWork = pplns.reduce((a, e) => a + e[1], 0);
+
+function blockDifficulty() {
+  return template ? Number(DIFF1_TARGET) / Number(targetFromBits(template.bits)) : null;
+}
+const pplnsWindow = () => {
+  const d = blockDifficulty();
+  return d ? PPLNS_FACTOR * d : Infinity;
+};
+
+function trimPplns() {
+  const want = pplnsWindow();
+  while (pplnsHead < pplns.length && pplnsWork > want) {
+    const e = pplns[pplnsHead];
+    const excess = pplnsWork - want;
+    if (e[1] <= excess) {
+      pplnsWork -= e[1];
+      pplnsHead++;
+    } else {
+      e[1] -= excess; // keep exactly the window: the oldest share counts in part
+      pplnsWork = want;
+    }
+  }
+  // compact now and then so the array doesn't grow forever
+  if (pplnsHead > 50_000 && pplnsHead > pplns.length / 2) {
+    pplns = pplns.slice(pplnsHead);
+    pplnsHead = 0;
+  }
+}
+
+function addPplns(address, work) {
+  const last = pplns[pplns.length - 1];
+  // consecutive shares from one address within a minute share an entry (keeps the file small)
+  if (pplns.length > pplnsHead && last[0] === address && Date.now() - last[2] < 60_000) last[1] += work;
+  else pplns.push([address, work, Date.now()]);
+  pplnsWork += work;
+  trimPplns();
+  save("pplns");
 }
 
 // shares are weighted by their difficulty, so a Bitaxe at diff 4096 earns 4096x a diff-1 share
-function recordWorker(worker, difficulty, lastShare = new Date().toISOString()) {
-  const wfile = "./data/workers.json";
-  const workers = readJson(wfile, {});
-  const w = (workers[worker] = workers[worker] || { work: 0, shares: 0, blocks: 0, firstSeen: new Date().toISOString() });
+function recordShare(worker, difficulty, solo = false) {
+  const now = new Date().toISOString();
+  const w = (db.workers[worker] = db.workers[worker] || { work: 0, shares: 0, blocks: 0, firstSeen: now });
   w.work += difficulty;
   w.shares += 1;
-  w.lastShare = lastShare;
-  fs.writeFileSync(wfile, JSON.stringify(workers, null, 2));
+  w.lastShare = now;
+  save("workers");
+  // solo work isn't part of the pool's round or window: only the all-time record counts it
+  if (solo) return;
+  const s = db.stats;
+  s.totalShares = (s.totalShares || 0) + difficulty;
+  const m = (s.miners[worker] = s.miners[worker] || { shares: 0 });
+  m.shares += difficulty;
+  m.lastShare = now;
+  save("stats");
+  addPplns(worker.split(".")[0], difficulty);
 }
 
-function recordShare(worker, difficulty, solo = false) {
-  const file = "./data/stats.json";
-  const stats = readJson(file, { totalShares: 0, miners: {} });
-  if (solo) {
-    // solo work isn't part of the pool's round: only the all-time record below counts it
-    recordWorker(worker, difficulty);
+function recordBlock(worker, height, reward, hash, solo = false) {
+  if (db.workers[worker]) db.workers[worker].blocks = (db.workers[worker].blocks || 0) + 1;
+  db.blocks.unshift({ height, miner: worker, reward, hash, time: new Date().toISOString(), ...(solo ? { solo: true } : {}) });
+  db.blocks = db.blocks.slice(0, 25);
+  save("workers");
+  save("blocks", true);
+}
+
+// Split a found block's reward over the PPLNS window by work and record it as a round. payout.js pays
+// a round once its reward has unlocked (101 confirmations) and the block is still in the chain.
+function creditPayouts(rewardSat, height, hash) {
+  trimPplns();
+  const work = {};
+  let total = 0;
+  for (let i = pplnsHead; i < pplns.length; i++) {
+    const [a, w] = pplns[i];
+    work[a] = (work[a] || 0) + w;
+    total += w;
+  }
+  let scheme = "pplns";
+  if (!total) {
+    // no window yet (first block after an upgrade): fall back to the work since the previous block
+    scheme = "round";
+    for (const [worker, m] of Object.entries(db.stats.miners || {})) {
+      const a = worker.split(".")[0];
+      work[a] = (work[a] || 0) + (m.shares || 0);
+      total += m.shares || 0;
+    }
+  }
+  if (!total) {
+    console.log("payout skipped: no shares recorded");
     return;
   }
-  stats.totalShares = (stats.totalShares || 0) + difficulty;
-  if (!stats.miners[worker]) stats.miners[worker] = { shares: 0 };
-  stats.miners[worker].shares += difficulty;
-  stats.miners[worker].lastShare = new Date().toISOString();
-  fs.writeFileSync(file, JSON.stringify(stats, null, 2));
-  recordWorker(worker, difficulty, stats.miners[worker].lastShare);
+  const credits = {};
+  for (const [a, w] of Object.entries(work)) {
+    const v = Math.floor((w / total) * rewardSat * 1e8) / 1e8; // never promise more than the block paid
+    if (v > 0) credits[a] = v;
+  }
+  db.rounds.push({ height, hash, reward: rewardSat, credits, scheme, work: total, time: new Date().toISOString() });
+  db.stats = { totalShares: 0, miners: {} };
+  save("stats");
+  save("rounds", true);
+  console.log(`payouts credited (${scheme}): block ${height}, ${rewardSat} SAT over ${Object.keys(credits).length} miner(s)`);
 }
+
+// payouts.json is payout.js's file; read it, never write it
+function payoutState() {
+  const p = readJson(dataFile("payouts.json"), {});
+  const settled = { ...(p.settled || {}) };
+  // payouts.json from before rounds.json existed keeps each round's status inline
+  for (const r of p.rounds || []) if (r.status && r.status !== "immature") settled[roundId(r)] = r.status;
+  return { owed: p.owed || {}, paid: p.paid || [], settled, resumedAt: p.resumedAt || null };
+}
+
+// pending = owed (unlocked, not yet paid) + credits of rounds still maturing
+function pendingNow(p = payoutState()) {
+  const pending = {};
+  for (const [a, v] of Object.entries(p.owed)) pending[a] = (pending[a] || 0) + v;
+  for (const r of db.rounds) if (!p.settled[roundId(r)]) for (const [a, v] of Object.entries(r.credits)) pending[a] = (pending[a] || 0) + v;
+  for (const a of Object.keys(pending)) pending[a] = round8(pending[a]);
+  return pending;
+}
+
+// rounds payout.js has settled and that are well buried can go
+function pruneRounds() {
+  if (!template || db.rounds.length < 300) return;
+  const { settled } = payoutState();
+  const before = db.rounds.length;
+  db.rounds = db.rounds.filter((r) => !settled[roundId(r)] || r.height > template.height - 1000);
+  if (db.rounds.length !== before) save("rounds");
+}
+setInterval(pruneRounds, 10 * 60_000);
 
 /* ------------------------------------------------------------------ */
 /* encoding helpers                                                    */
@@ -223,6 +363,13 @@ function merkleBranches(txids) {
 // "rules"). Before that, a coinbase witness makes the node reject the block as "unexpected-witness".
 const witnessActive = (t) => !!t.default_witness_commitment && (t.rules || []).some((r) => r.replace(/^!/, "") === "segwit");
 
+function registerJob(job) {
+  jobs.set(job.id, job);
+  // keep recent jobs (pool, solo and per-miner copies) so in-flight shares on recent work count
+  while (jobs.size > 20_000) jobs.delete(jobs.keys().next().value);
+  return job;
+}
+
 function buildJob(t, clean, outScript = payoutScript) {
   const id = (nextJobId++).toString(16);
   const scriptPrefix = heightScript(t.height);
@@ -236,18 +383,11 @@ function buildJob(t, clean, outScript = payoutScript) {
     outputs.push(Buffer.concat([u64le(0), varint(c.length), c]));
   }
   // coinb1 | extranonce1 | extranonce2 | coinb2 is the coinbase without witness (its txid form)
-  const coinb1 = Buffer.concat([
-    u32le(2),
-    Buffer.from([1]),
-    Buffer.alloc(32),
-    Buffer.from("ffffffff", "hex"),
-    varint(scriptLen),
-    scriptPrefix,
-  ]);
+  const coinb1 = Buffer.concat([u32le(2), Buffer.from([1]), Buffer.alloc(32), Buffer.from("ffffffff", "hex"), varint(scriptLen), scriptPrefix]);
   const coinb2 = Buffer.concat([scriptSuffix, Buffer.from("ffffffff", "hex"), varint(outputs.length), ...outputs, u32le(0)]);
   const txs = t.transactions || [];
   const branches = merkleBranches(txs.map((tx) => reverse(Buffer.from(tx.txid, "hex"))));
-  const job = {
+  return registerJob({
     id,
     template: t,
     coinb1,
@@ -258,11 +398,14 @@ function buildJob(t, clean, outScript = payoutScript) {
     prevhash: stratumPrevHash(t.previousblockhash),
     clean,
     created: Date.now(),
-  };
-  jobs.set(id, job);
-  // keep recent jobs (pool and solo) so in-flight shares on recent work are still accepted
-  while (jobs.size > 200) jobs.delete(jobs.keys().next().value);
-  return job;
+  });
+}
+
+// The same work under a new job id, for one miner whose difficulty just changed. ESP-Miner restarts
+// extranonce2 at 0 on every notify, so re-sending the old id would make it redo work it already did;
+// a copy keeps that cheap without sending everyone a new job.
+function copyJob(job) {
+  return registerJob({ ...job, id: (nextJobId++).toString(16), clean: false, created: Date.now() });
 }
 
 function notifyParams(job) {
@@ -287,11 +430,20 @@ async function refreshTemplate(force = false) {
     const t = await rpc("getblocktemplate", [{ rules: ["segwit"] }]);
     const tipChanged = !template || t.previousblockhash !== template.previousblockhash;
     const txsChanged = !template || (t.transactions || []).length !== (template.transactions || []).length;
+    const prevTip = template ? { height: template.height - 1, hash: template.previousblockhash } : null;
     template = t;
     if (tipChanged || txsChanged || force || Date.now() - (currentJob?.created || 0) > 60_000) {
       if (tipChanged) console.log("new block template: height", t.height, "bits", t.bits, "txs", (t.transactions || []).length);
       currentJob = buildJob(t, tipChanged);
-      if (tipChanged) jobs.forEach((j, id) => j.template.previousblockhash !== t.previousblockhash && jobs.delete(id));
+      soloJobs.clear();
+      if (tipChanged) {
+        jobs.forEach((j, id) => j.template.previousblockhash !== t.previousblockhash && jobs.delete(id));
+        if (prevTip) checkReorg(prevTip, t).catch((e) => console.error("reorg check failed:", e.message));
+      } else {
+        // work older than 10 minutes on the same tip is still valid but nobody should be on it
+        const old = Date.now() - 10 * 60_000;
+        jobs.forEach((j, id) => j.created < old && j !== currentJob && jobs.delete(id));
+      }
       for (const c of clients) if (c.authorized) sendJob(c);
     }
   } catch (e) {
@@ -303,16 +455,57 @@ async function refreshTemplate(force = false) {
 /* RPC                                                                 */
 /* ------------------------------------------------------------------ */
 
+const SLOW_RPC = new Set(["scantxoutset", "submitblock"]);
 async function rpc(method, params = [], wallet = null) {
   const auth = Buffer.from(`${config.rpc.user}:${config.rpc.password}`).toString("base64");
   const res = await fetch(`http://${config.rpc.host}:${config.rpc.port}${wallet ? `/wallet/${encodeURIComponent(wallet)}` : ""}`, {
     method: "POST",
     headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "1.0", id: "saturn-pool", method, params }),
+    timeout: SLOW_RPC.has(method) ? 180_000 : 30_000,
   });
+  if (res.status === 401 || res.status === 403) throw new Error(`the node refused ${method} (check the pool's RPC user and its whitelist)`);
   const json = await res.json();
   if (json.error) throw new Error(JSON.stringify(json.error));
   return json.result;
+}
+
+/* ------------------------------------------------------------------ */
+/* reorg alarm                                                         */
+/* ------------------------------------------------------------------ */
+
+// When the tip moves, the block we were building on should still be in the chain. If it isn't, the
+// chain reorganised: walk back to where the old branch rejoins it to measure how deep. A deep reorg is
+// what a 51% attack looks like, so payouts pause (payout.js honours guard.json) until an operator
+// checks the chain and runs `node payout.js --resume`.
+async function checkReorg(prevTip, t) {
+  if (prevTip.hash === t.previousblockhash) return;
+  let hash = prevTip.hash;
+  let depth = 0;
+  for (; depth < 500; depth++) {
+    const h = await rpc("getblockheader", [hash]).catch(() => null);
+    if (!h) return; // a block we never fully had; nothing to measure
+    if (h.confirmations !== -1) break; // back on the main chain
+    hash = h.previousblockhash;
+  }
+  if (depth === 0) return;
+  const event = { time: new Date().toISOString(), depth, oldTip: prevTip.hash, oldHeight: prevTip.height, newTip: t.previousblockhash, newHeight: t.height - 1 };
+  console.error(`CHAIN REORGANISATION: ${depth} block(s) replaced (old tip ${prevTip.height} ${prevTip.hash})`);
+  db.guard.reorgs = [event, ...(db.guard.reorgs || [])].slice(0, 50);
+  if (depth >= REORG_ALERT_DEPTH && !db.guard.paused) {
+    db.guard.paused = { since: event.time, depth, reason: `a ${depth}-block chain reorganisation` };
+    console.error(`PAYOUTS PAUSED: the chain reorganised ${depth} blocks deep. Check it, then run: node payout.js --resume`);
+  }
+  save("guard", true);
+  alert(depth >= REORG_ALERT_DEPTH ? `⚠️ Saturn chain reorganised ${depth} blocks deep (old tip ${prevTip.height}). Pool payouts are paused until you run \`node payout.js --resume\`.` : `Saturn chain reorganised ${depth} block(s) at height ${prevTip.height}.`);
+}
+
+// optional: post alarms to a Discord/Slack-style webhook (config.alertWebhook)
+function alert(text) {
+  if (!config.alertWebhook) return;
+  fetch(config.alertWebhook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: text, text }), timeout: 10_000 }).catch((e) =>
+    console.error("alert webhook failed:", e.message),
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -320,7 +513,7 @@ async function rpc(method, params = [], wallet = null) {
 /* ------------------------------------------------------------------ */
 
 function send(socket, obj) {
-  if (!socket.destroyed) socket.write(JSON.stringify(obj) + "\n");
+  if (!socket.destroyed && socket.writable) socket.write(JSON.stringify(obj) + "\n");
 }
 
 // whole powers of two: ESP-Miner (Bitaxe) truncates set_difficulty to an integer, so a fractional
@@ -346,14 +539,15 @@ function jobFor(c) {
     job = buildJob(currentJob.template, currentJob.clean, c.soloScript);
     job.solo = true;
     soloJobs.set(key, job);
-    while (soloJobs.size > 200) soloJobs.delete(soloJobs.keys().next().value);
+    while (soloJobs.size > 10_000) soloJobs.delete(soloJobs.keys().next().value);
   }
   return job;
 }
 
-function sendJob(c) {
+function sendJob(c, fresh = false) {
   if (!currentJob) return;
-  const job = jobFor(c);
+  let job = jobFor(c);
+  if (fresh) job = copyJob(job);
   // a job re-sent after a difficulty change keeps the easier of the two, so shares the miner is
   // already working on at the old difficulty still count
   const prev = c.jobDiff.get(job.id);
@@ -376,25 +570,34 @@ function retarget(c) {
   const next = roundDiff(c.difficulty * factor);
   if (next === c.difficulty) return;
   setDifficulty(c, next);
-  // the new difficulty applies to the next job. Send a fresh job id rather than re-sending the
-  // current one: ESP-Miner restarts extranonce2 at 0 on every notify, so a repeated job would
-  // make it re-hash work it already did and submit duplicates
-  if (template) {
-    currentJob = buildJob(template, false);
-    for (const x of clients) if (x.authorized) sendJob(x);
+  // the new difficulty applies from the next job: this miner (only) gets the current work under a
+  // fresh job id
+  sendJob(c, true);
+}
+
+// clients that mostly send junk (malformed lines, invalid shares) are cut off for a while
+const bans = new Map(); // ip -> until
+const perIp = new Map(); // ip -> open connections
+function junk(c, weight = 1) {
+  c.junk += weight;
+  if (c.junk >= 50 && c.junk > 4 * (c.accepted + 1)) {
+    bans.set(c.ip, Date.now() + BAN_MS);
+    console.log(`banned ${c.ip} for ${BAN_MS / 60_000} min: ${c.junk} bad messages, ${c.accepted} good shares`);
+    c.socket.destroy();
   }
 }
 
 async function handleSubmit(c, msg) {
-  const [worker, jobId, en2Hex, ntimeHex, nonceHex, versionBitsHex] = msg.params || [];
-  const reject = (code, text) => {
+  const [, jobId, en2Hex, ntimeHex, nonceHex, versionBitsHex] = msg.params || [];
+  const reject = (code, text, bad = true) => {
     c.rejected++;
-    if (c.rejected <= 50 || c.rejected % 100 === 0) console.log(`share rejected from ${c.worker || socket_addr(c)}: ${text} (job ${jobId})`);
+    if (bad) junk(c);
+    if (c.rejected <= 50 || c.rejected % 100 === 0) console.log(`share rejected from ${c.worker || c.ip}: ${text} (job ${jobId})`);
     send(c.socket, { id: msg.id, result: false, error: [code, text, null] });
   };
   if (!c.authorized) return reject(24, "unauthorized");
   const job = jobs.get(String(jobId));
-  if (!job) return reject(21, "stale job");
+  if (!job) return reject(21, "stale job", false); // normal right after a new block
   if (typeof en2Hex !== "string" || en2Hex.length !== EXTRANONCE2_SIZE * 2 || !/^[0-9a-f]+$/i.test(en2Hex)) return reject(20, "bad extranonce2");
   if (!/^[0-9a-f]{8}$/i.test(ntimeHex || "") || !/^[0-9a-f]{8}$/i.test(nonceHex || "")) return reject(20, "bad ntime/nonce");
 
@@ -474,12 +677,35 @@ async function handleSubmit(c, msg) {
   retarget(c);
 }
 
-const socket_addr = (c) => c.socket.remoteAddress;
+// solo logins check the address with the node; cache the answer so reconnect storms don't hit RPC
+const addressScripts = new Map();
+async function scriptFor(address) {
+  if (addressScripts.has(address)) return addressScripts.get(address);
+  const v = await rpc("validateaddress", [address]);
+  if (!v.isvalid) throw new Error("invalid address");
+  addressScripts.set(address, v.scriptPubKey);
+  if (addressScripts.size > 50_000) addressScripts.delete(addressScripts.keys().next().value);
+  return v.scriptPubKey;
+}
+
+const ADDRESS_RE = new RegExp(`^${ADDRESS_PREFIX}1[02-9ac-hj-np-z]{8,87}$`);
+let refusedLogged = 0;
 
 const server = net.createServer((socket) => {
-  miners++;
+  const ip = (socket.remoteAddress || "").replace(/^::ffff:/, "");
+  const banned = bans.get(ip);
+  if (banned && banned > Date.now()) return socket.destroy();
+  if (banned) bans.delete(ip);
+  const open = perIp.get(ip) || 0;
+  if (clients.size >= MAX_CONNECTIONS || open >= MAX_PER_IP) {
+    if (refusedLogged++ % 100 === 0) console.log(`refused connection from ${ip}: ${open >= MAX_PER_IP ? `${open} already open from that address` : "pool is full"}`);
+    return socket.destroy();
+  }
+  perIp.set(ip, open + 1);
+
   const c = {
     socket,
+    ip,
     extranonce1: (nextExtranonce1++ >>> 0).toString(16).padStart(8, "0").slice(-8),
     difficulty: START_DIFF,
     versionMask: 0,
@@ -487,6 +713,7 @@ const server = net.createServer((socket) => {
     worker: null,
     accepted: 0,
     rejected: 0,
+    junk: 0,
     windowStart: Date.now(),
     windowShares: 0,
     jobDiff: new Map(),
@@ -494,115 +721,133 @@ const server = net.createServer((socket) => {
     since: Date.now(),
     seen: new Set(),
     buffer: "",
+    busy: Promise.resolve(),
   };
   clients.add(c);
-  console.log("miner connected", socket.remoteAddress, "miners:", miners);
+  if (clients.size <= 200 || clients.size % 100 === 0) console.log("miner connected", ip, "miners:", clients.size);
   socket.setEncoding("utf8");
   socket.setKeepAlive(true, 60_000);
+  socket.setNoDelay(true);
+  // log in within 30 s, then say something at least every 15 minutes
+  const loginTimer = setTimeout(() => !c.authorized && socket.destroy(), LOGIN_TIMEOUT_MS);
+  socket.setTimeout(IDLE_TIMEOUT_MS, () => socket.destroy());
 
-  socket.on("data", async (data) => {
+  socket.on("data", (data) => {
     c.buffer += data;
-    if (c.buffer.length > 64 * 1024) return socket.destroy();
+    if (c.buffer.length > MAX_LINE) {
+      junk(c, 25);
+      return socket.destroy();
+    }
     const lines = c.buffer.split("\n");
     c.buffer = lines.pop();
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      let msg;
-      try {
-        msg = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      if (!c.authorized && (c.logged = (c.logged || 0) + 1) <= 6) {
-        console.log(`from ${socket.remoteAddress}: ${msg.method || "response"} ${JSON.stringify(msg.params ?? msg.result ?? "").slice(0, 160)}`);
-      }
-      try {
-        switch (msg.method) {
-          case "mining.configure": {
-            // BIP310 version rolling (Bitaxe asks for it)
-            const [exts = [], opts = {}] = msg.params || [];
-            const result = {};
-            if (exts.includes("version-rolling")) {
-              const requested = parseInt(opts["version-rolling.mask"] || "ffffffff", 16);
-              c.versionMask = (requested & VERSION_ROLLING_MASK) >>> 0;
-              result["version-rolling"] = true;
-              result["version-rolling.mask"] = c.versionMask.toString(16).padStart(8, "0");
-            }
-            send(socket, { id: msg.id, result, error: null });
-            break;
-          }
-          case "mining.subscribe":
-            send(socket, {
-              id: msg.id,
-              result: [[["mining.set_difficulty", c.extranonce1], ["mining.notify", c.extranonce1]], c.extranonce1, EXTRANONCE2_SIZE],
-              error: null,
-            });
-            setDifficulty(c, c.difficulty);
-            break;
-          case "mining.suggest_difficulty": {
-            const d = Number(msg.params?.[0]);
-            if (d > 0) setDifficulty(c, d);
-            if (msg.id != null) send(socket, { id: msg.id, result: true, error: null });
-            break;
-          }
-          case "mining.extranonce.subscribe":
-            send(socket, { id: msg.id, result: true, error: null });
-            break;
-          case "mining.authorize": {
-            // phones auto-capitalise ("Sat1q…") and add stray spaces; addresses are case-insensitive,
-            // so normalise to the canonical lowercase form instead of refusing the miner
-            const raw = String(msg.params?.[0] || "").trim();
-            const dot = raw.indexOf(".");
-            const address = (dot < 0 ? raw : raw.slice(0, dot)).toLowerCase();
-            const workerName = dot < 0 ? "" : raw.slice(dot + 1).trim();
-            const worker = workerName ? `${address}.${workerName}` : address;
-            if (!new RegExp(`^${ADDRESS_PREFIX}1[02-9ac-hj-np-z]{8,87}$`).test(address)) {
-              console.log(`login refused from ${socket.remoteAddress}: username ${JSON.stringify(raw)} is not a sat1 address`);
-              send(socket, { id: msg.id, result: false, error: [24, "username must be your sat1… address (optionally .workername)", null] });
-              break;
-            }
-            // password "solo" (or "m=solo"): the miner's blocks pay its own address in full
-            const password = String(msg.params?.[1] || "");
-            if (/(^|[\s,;])(m=)?solo($|[\s,;])/i.test(password)) {
-              try {
-                const v = await rpc("validateaddress", [address]);
-                if (!v.isvalid) throw new Error("invalid address");
-                c.soloScript = v.scriptPubKey;
-              } catch (e) {
-                send(socket, { id: msg.id, result: false, error: [24, `solo mining needs a valid address: ${e.message}`, null] });
-                break;
-              }
-            }
-            c.worker = worker;
-            c.authorized = true;
-            send(socket, { id: msg.id, result: true, error: null });
-            console.log(`authorized ${c.soloScript ? "SOLO " : ""}miner:`, worker, "extranonce1", c.extranonce1);
-            sendJob(c);
-            break;
-          }
-          case "mining.submit":
-            await handleSubmit(c, msg);
-            break;
-          default:
-            if (msg.id != null && msg.method) send(socket, { id: msg.id, result: null, error: [20, "unsupported method", null] });
-        }
-      } catch (e) {
-        console.error("stratum handler error:", e.message);
-        if (msg.id != null) send(socket, { id: msg.id, result: false, error: [20, "internal error", null] });
-      }
-    }
+    // handle lines strictly in order, one at a time (submits await the node)
+    for (const line of lines) c.busy = c.busy.then(() => handleLine(c, line));
   });
 
   socket.on("close", () => {
-    miners--;
+    clearTimeout(loginTimer);
     clients.delete(c);
-    console.log(`miner disconnected (${c.worker || "unauthorized"}: ${c.accepted} accepted, ${c.rejected} rejected), miners: ${miners}`);
+    const n = (perIp.get(ip) || 1) - 1;
+    if (n > 0) perIp.set(ip, n);
+    else perIp.delete(ip);
+    if (c.authorized || clients.size < 200) console.log(`miner disconnected (${c.worker || "unauthorized"}: ${c.accepted} accepted, ${c.rejected} rejected), miners: ${clients.size}`);
   });
-  socket.on("error", (err) => console.log("socket error:", err.message));
+  socket.on("error", () => {});
 });
 
+async function handleLine(c, line) {
+  const socket = c.socket;
+  if (socket.destroyed || !line.trim()) return;
+  let msg;
+  try {
+    msg = JSON.parse(line);
+    if (!msg || typeof msg !== "object") throw new Error("not an object");
+  } catch {
+    return junk(c, 2);
+  }
+  if (!c.authorized && (c.logged = (c.logged || 0) + 1) <= 6 && clients.size < 500) {
+    console.log(`from ${c.ip}: ${msg.method || "response"} ${JSON.stringify(msg.params ?? msg.result ?? "").slice(0, 160)}`);
+  }
+  try {
+    switch (msg.method) {
+      case "mining.configure": {
+        // BIP310 version rolling (Bitaxe asks for it)
+        const [exts = [], opts = {}] = Array.isArray(msg.params) ? msg.params : [];
+        const result = {};
+        if (Array.isArray(exts) && exts.includes("version-rolling")) {
+          const requested = parseInt(opts?.["version-rolling.mask"] || "ffffffff", 16);
+          c.versionMask = (requested & VERSION_ROLLING_MASK) >>> 0;
+          result["version-rolling"] = true;
+          result["version-rolling.mask"] = c.versionMask.toString(16).padStart(8, "0");
+        }
+        send(socket, { id: msg.id, result, error: null });
+        break;
+      }
+      case "mining.subscribe":
+        send(socket, {
+          id: msg.id,
+          result: [[["mining.set_difficulty", c.extranonce1], ["mining.notify", c.extranonce1]], c.extranonce1, EXTRANONCE2_SIZE],
+          error: null,
+        });
+        setDifficulty(c, c.difficulty);
+        break;
+      case "mining.suggest_difficulty": {
+        const d = Number(msg.params?.[0]);
+        if (d > 0) setDifficulty(c, d);
+        if (msg.id != null) send(socket, { id: msg.id, result: true, error: null });
+        break;
+      }
+      case "mining.extranonce.subscribe":
+        send(socket, { id: msg.id, result: true, error: null });
+        break;
+      case "mining.authorize": {
+        // phones auto-capitalise ("Sat1q…") and add stray spaces; addresses are case-insensitive,
+        // so normalise to the canonical lowercase form instead of refusing the miner
+        const raw = String(msg.params?.[0] || "").trim().slice(0, 200);
+        const dot = raw.indexOf(".");
+        const address = (dot < 0 ? raw : raw.slice(0, dot)).toLowerCase();
+        const workerName = (dot < 0 ? "" : raw.slice(dot + 1).trim()).replace(/[^\w.-]/g, "").slice(0, 40);
+        const worker = workerName ? `${address}.${workerName}` : address;
+        if (!ADDRESS_RE.test(address)) {
+          junk(c, 5);
+          if (clients.size < 500) console.log(`login refused from ${c.ip}: username ${JSON.stringify(raw.slice(0, 80))} is not a ${ADDRESS_PREFIX}1 address`);
+          send(socket, { id: msg.id, result: false, error: [24, `username must be your ${ADDRESS_PREFIX}1… address (optionally .workername)`, null] });
+          break;
+        }
+        // password "solo" (or "m=solo"): the miner's blocks pay its own address in full
+        const password = String(msg.params?.[1] || "").slice(0, 200);
+        if (/(^|[\s,;])(m=)?solo($|[\s,;])/i.test(password)) {
+          try {
+            c.soloScript = await scriptFor(address);
+          } catch (e) {
+            send(socket, { id: msg.id, result: false, error: [24, `solo mining needs a valid address: ${e.message}`, null] });
+            break;
+          }
+        }
+        c.worker = worker;
+        c.authorized = true;
+        send(socket, { id: msg.id, result: true, error: null });
+        if (clients.size < 500) console.log(`authorized ${c.soloScript ? "SOLO " : ""}miner:`, worker, "extranonce1", c.extranonce1);
+        sendJob(c);
+        break;
+      }
+      case "mining.submit":
+        await handleSubmit(c, msg);
+        break;
+      default:
+        if (msg.id != null && msg.method) {
+          junk(c);
+          send(socket, { id: msg.id, result: null, error: [20, "unsupported method", null] });
+        }
+    }
+  } catch (e) {
+    console.error("stratum handler error:", e.message);
+    if (msg.id != null) send(socket, { id: msg.id, result: false, error: [20, "internal error", null] });
+  }
+}
+
 /* ------------------------------------------------------------------ */
-/* stats API (unchanged endpoints) + live hashrate per worker          */
+/* network stats and live hashrate                                     */
 /* ------------------------------------------------------------------ */
 
 // hashes per second implied by the shares a miner sent in the last 10 minutes (each diff-1 share
@@ -631,17 +876,25 @@ async function refreshNetwork() {
 setInterval(refreshNetwork, 15_000);
 refreshNetwork();
 
-const WEB_ROOT = path.join(__dirname, "public");
+/* ------------------------------------------------------------------ */
+/* website and API                                                     */
+/* ------------------------------------------------------------------ */
+
+const WEB_ROOT = config.webRoot || path.join(__dirname, "public");
 
 // scantxoutset runs one scan at a time, so requests queue behind each other; results are cached
-// for a few seconds per address set
+// for a few seconds per address set, and the queue has a ceiling
 let scanChain = Promise.resolve();
+let scansWaiting = 0;
 const scanCache = new Map();
 function scanUtxos(addrs) {
   const key = [...addrs].sort().join(",");
   const hit = scanCache.get(key);
   if (hit && Date.now() - hit.at < 8000) return Promise.resolve(hit.value);
+  if (scansWaiting >= 20) return Promise.reject(Object.assign(new Error("busy, try again in a few seconds"), { status: 503 }));
+  scansWaiting++;
   const run = scanChain.then(async () => {
+    scansWaiting--;
     const r = await rpc("scantxoutset", ["start", addrs.map((a) => `addr(${a})`)]);
     const tip = r.height;
     const utxos = (r.unspents || []).map((u) => {
@@ -669,13 +922,69 @@ function scanUtxos(addrs) {
   return run;
 }
 
+// Per-IP rate limits (requests per minute). Behind nginx every request comes from 127.0.0.1, so the
+// client's address is taken from X-Real-IP, but only when the request really came from this machine.
+const LIMITS = { utxos: 20, broadcast: 6, stats: 120, other: 240 };
+const hits = new Map(); // `${ip}|${kind}` -> [windowStart, count]
+setInterval(() => {
+  const old = Date.now() - 60_000;
+  for (const [k, [t]] of hits) if (t < old) hits.delete(k);
+}, 60_000);
+function clientIp(req) {
+  const direct = (req.socket.remoteAddress || "").replace(/^::ffff:/, "");
+  if ((direct === "127.0.0.1" || direct === "::1") && req.headers["x-real-ip"]) return String(req.headers["x-real-ip"]).slice(0, 64);
+  return direct;
+}
+function limited(req, kind) {
+  const key = `${clientIp(req)}|${kind}`;
+  const now = Date.now();
+  const h = hits.get(key);
+  if (!h || now - h[0] >= 60_000) {
+    hits.set(key, [now, 1]);
+    return false;
+  }
+  h[1]++;
+  return h[1] > LIMITS[kind];
+}
+
+// /stats is built at most every 3 seconds, however many people are looking
+let statsCache = { at: 0, body: "" };
+function statsBody() {
+  if (Date.now() - statsCache.at < 3000) return statsCache.body;
+  const p = payoutState();
+  const live = [...clients].filter((c) => c.authorized);
+  const pausedNow = db.guard.paused && !(p.resumedAt && p.resumedAt > db.guard.paused.since) ? db.guard.paused : null;
+  const body = JSON.stringify({
+    totalShares: db.stats.totalShares || 0,
+    miners: db.stats.miners || {},
+    workers: db.workers,
+    blocks: db.blocks,
+    connected: live.map((c) => ({ worker: c.worker, solo: !!c.soloScript, difficulty: c.difficulty, accepted: c.accepted, rejected: c.rejected, hashrate: liveHashrate(c), since: new Date(c.since).toISOString() })),
+    hashrate: live.reduce((a, c) => a + liveHashrate(c), 0),
+    height: template?.height ?? null,
+    // difficulty of the block being mined now (getmininginfo reports the tip's)
+    network: { ...network, nextDifficulty: blockDifficulty() },
+    reward: template ? template.coinbasevalue / 1e8 : null,
+    pending: pendingNow(p),
+    rounds: db.rounds.slice(-25).map((r) => ({ height: r.height, status: p.settled[roundId(r)] || "immature", reward: r.reward, scheme: r.scheme || "round" })),
+    paid: p.paid.slice(0, 10),
+    payoutScheme: { name: "PPLNS", windowBlocks: PPLNS_FACTOR, windowWork: pplnsWork },
+    guard: { paused: pausedNow, lastReorg: (db.guard.reorgs || [])[0] || null },
+    stratum: `stratum+tcp://${config.poolHost || "pool.saturn.boats"}:${config.stratumPort}`,
+  });
+  statsCache = { at: Date.now(), body };
+  return body;
+}
+
 function handleHttp(req, res) {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  const urlPath = (req.url || "/").split("?")[0];
   // the pool website: GET / serves public/index.html when it exists
-  const urlPath = req.url.split("?")[0];
-  if (req.method === "GET" && (urlPath === "/" || urlPath === "/index.html" || /^\/[\w.-]+\.(png|svg|ico|webp)$/.test(urlPath))) {
+  if (req.method === "GET" && (urlPath === "/" || urlPath === "/index.html" || /^\/[\w.-]+\.(png|svg|ico|webp|jpg)$/.test(urlPath))) {
+    if (limited(req, "other")) return tooMany(res);
     const file = path.join(WEB_ROOT, urlPath === "/" ? "index.html" : urlPath.slice(1));
-    if (file.startsWith(WEB_ROOT) && fs.existsSync(file)) {
-      const types = { ".html": "text/html; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".webp": "image/webp" };
+    if (file.startsWith(WEB_ROOT + path.sep) && fs.existsSync(file)) {
+      const types = { ".html": "text/html; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".webp": "image/webp", ".jpg": "image/jpeg" };
       res.setHeader("Content-Type", types[path.extname(file)] || "application/octet-stream");
       res.setHeader("Cache-Control", "no-cache");
       return res.end(fs.readFileSync(file));
@@ -683,39 +992,16 @@ function handleHttp(req, res) {
   }
   res.setHeader("Content-Type", "application/json");
   res.setHeader("Access-Control-Allow-Origin", "*");
-  const stats = readJson("./data/stats.json", { totalShares: 0, miners: {} });
-  const blocks = readJson("./data/blocks.json", []);
-  const payouts = readJson("./data/payouts.json", { pending: {}, paid: [] });
-  const parts = req.url.split("/").filter(Boolean);
+  const parts = urlPath.split("/").filter(Boolean);
 
-  if (req.url === "/stats") {
-    res.end(
-      JSON.stringify(
-        {
-          totalShares: stats.totalShares || 0,
-          miners: stats.miners || {},
-          workers: readJson("./data/workers.json", {}),
-          blocks,
-          connected: [...clients].filter((c) => c.authorized).map((c) => ({ worker: c.worker, solo: !!c.soloScript, difficulty: c.difficulty, accepted: c.accepted, rejected: c.rejected, hashrate: liveHashrate(c), since: new Date(c.since).toISOString() })),
-          hashrate: [...clients].filter((c) => c.authorized).reduce((a, c) => a + liveHashrate(c), 0),
-          height: template?.height ?? null,
-          // difficulty of the block being mined now (getmininginfo reports the tip's)
-          network: { ...network, nextDifficulty: template ? Number(DIFF1_TARGET) / Number(targetFromBits(template.bits)) : null },
-          reward: template ? template.coinbasevalue / 1e8 : null,
-          pending: withPending(payouts).pending || {},
-          rounds: (payouts.rounds || []).slice(-25).map((r) => ({ height: r.height, status: r.status, reward: r.reward })),
-          paid: (payouts.paid || []).slice(-10),
-          stratum: `stratum+tcp://${config.poolHost || "pool.saturn.boats"}:${config.stratumPort}`,
-        },
-        null,
-        2,
-      ),
-    );
-    return;
+  if (urlPath === "/stats") {
+    if (limited(req, "stats")) return tooMany(res);
+    return res.end(statsBody());
   }
-  // Light-wallet API for Saturn Miner: unspent coins for a set of addresses, and broadcasting a
+  // Light-wallet API for the Saturn app: unspent coins for a set of addresses, and broadcasting a
   // signed transaction. Read-only plus relay, like a block explorer.
   if (urlPath === "/utxos" && req.method === "GET") {
+    if (limited(req, "utxos")) return tooMany(res);
     const addrs = (new URL(req.url, "http://x").searchParams.get("addrs") || "")
       .split(",")
       .map((a) => a.trim().toLowerCase())
@@ -728,12 +1014,13 @@ function handleHttp(req, res) {
     scanUtxos(addrs)
       .then((r) => res.end(JSON.stringify(r)))
       .catch((e) => {
-        res.statusCode = 502;
+        res.statusCode = e.status || 502;
         res.end(JSON.stringify({ error: e.message }));
       });
     return;
   }
   if (urlPath === "/broadcast" && req.method === "POST") {
+    if (limited(req, "broadcast")) return tooMany(res);
     let body = "";
     req.on("data", (d) => {
       body += d;
@@ -742,7 +1029,7 @@ function handleHttp(req, res) {
     req.on("end", async () => {
       try {
         const { hex } = JSON.parse(body || "{}");
-        if (!/^[0-9a-f]+$/i.test(hex || "")) throw new Error("send {\"hex\": \"<signed transaction>\"}");
+        if (!/^[0-9a-f]+$/i.test(hex || "")) throw new Error('send {"hex": "<signed transaction>"}');
         const txid = await rpc("sendrawtransaction", [hex]);
         console.log("broadcast", txid);
         res.end(JSON.stringify({ txid }));
@@ -753,50 +1040,52 @@ function handleHttp(req, res) {
     });
     return;
   }
-  if (urlPath === "/history") {
-    res.end(JSON.stringify(history));
-    return;
-  }
+  if (limited(req, "other")) return tooMany(res);
+  if (urlPath === "/history") return res.end(JSON.stringify(db.history));
   if (parts[0] === "stats" && parts[1]) {
-    const address = parts[1];
-    const work = Object.entries(stats.miners || {})
-      .filter(([w]) => w.split(".")[0] === address)
-      .reduce((a, [, m]) => a + (m.shares || 0), 0);
-    res.end(
-      JSON.stringify(
-        {
-          address,
-          shares: work,
-          blocksFound: blocks.filter((b) => String(b.miner).split(".")[0] === address).length,
-          pendingPayout: payouts.pending?.[address] || 0,
-          lastShare: Object.entries(stats.miners || {}).filter(([w]) => w.split(".")[0] === address).map(([, m]) => m.lastShare).sort().pop() || null,
-        },
-        null,
-        2,
-      ),
+    const address = parts[1].toLowerCase();
+    const mine = Object.entries(db.stats.miners || {}).filter(([w]) => w.split(".")[0] === address);
+    return res.end(
+      JSON.stringify({
+        address,
+        shares: mine.reduce((a, [, m]) => a + (m.shares || 0), 0),
+        blocksFound: db.blocks.filter((b) => String(b.miner).split(".")[0] === address).length,
+        pendingPayout: pendingNow()[address] || 0,
+        lastShare: mine.map(([, m]) => m.lastShare).sort().pop() || null,
+      }),
     );
-    return;
   }
   res.statusCode = 404;
   res.end(JSON.stringify({ error: "not found" }));
 }
+function tooMany(res) {
+  res.statusCode = 429;
+  res.setHeader("Retry-After", "30");
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify({ error: "too many requests, slow down" }));
+}
+
+const LISTEN_HOST = config.listenHost || "0.0.0.0";
 const statsServer = http.createServer(handleHttp);
+statsServer.requestTimeout = 30_000;
+statsServer.headersTimeout = 15_000;
 // optional second port for the website (e.g. 80), same pages and API
 if (config.sitePort) {
-  http.createServer(handleHttp).listen(config.sitePort, "0.0.0.0", () => console.log(`Saturn pool website listening on ${config.sitePort}`)).on("error", (e) => console.error(`website port ${config.sitePort}:`, e.message));
+  const site = http.createServer(handleHttp);
+  site.requestTimeout = 30_000;
+  site.listen(config.sitePort, LISTEN_HOST, () => console.log(`Saturn pool website listening on ${config.sitePort}`)).on("error", (e) => console.error(`website port ${config.sitePort}:`, e.message));
 }
 
 // pool hashrate once a minute for the last 24 hours, for the chart on the website
-const HISTORY_FILE = "./data/history.json";
-let history = readJson(HISTORY_FILE, []).filter(([t]) => t > Date.now() - 86_400_000);
 setInterval(() => {
   const h = [...clients].filter((c) => c.authorized).reduce((a, c) => a + liveHashrate(c), 0);
-  history.push([Date.now(), Math.round(h)]);
-  history = history.filter(([t]) => t > Date.now() - 86_400_000);
+  db.history.push([Date.now(), Math.round(h)]);
+  db.history = db.history.filter(([t]) => t > Date.now() - 86_400_000);
+  save("history");
 }, 60_000);
-setInterval(() => fs.writeFileSync(HISTORY_FILE, JSON.stringify(history)), 5 * 60_000);
 
-// The address blocks pay must belong to the wallet payout.js pays from, or rewards are lost.
+// The address blocks pay must belong to the wallet payout.js pays from, or rewards are lost. The
+// pool's RPC user may not be allowed wallet calls (it shouldn't need them), so this is best-effort.
 async function checkPayoutAddress() {
   const wallet = config.payoutWallet || "vps-wallet";
   if (!config.payoutAddress) {
@@ -804,24 +1093,16 @@ async function checkPayoutAddress() {
     return;
   }
   try {
+    const v = await rpc("validateaddress", [config.payoutAddress]);
+    if (v.scriptPubKey !== payoutScript) console.error(`WARNING: config.payoutScript doesn't match config.payoutAddress (${v.scriptPubKey}).`);
     const info = await rpc("getaddressinfo", [config.payoutAddress], wallet);
     if (!info.ismine) console.error(`WARNING: the pool pays ${config.payoutAddress}, which is NOT in the "${wallet}" wallet. Block rewards there cannot be paid out.`);
-    else if (info.scriptPubKey !== payoutScript) console.error(`WARNING: config.payoutScript doesn't match config.payoutAddress (${info.scriptPubKey}).`);
     else console.log(`block rewards go to ${config.payoutAddress} in the "${wallet}" wallet`);
   } catch (e) {
-    console.error(`WARNING: couldn't check the payout address against the "${wallet}" wallet: ${e.message}`);
+    console.log(`block rewards go to ${config.payoutAddress} (payout.js checks it belongs to the "${wallet}" wallet)`);
   }
 }
 checkPayoutAddress();
-
-// first run with the all-time worker list: seed it from the current round and the blocks found so far
-if (!fs.existsSync("./data/workers.json")) {
-  const stats = readJson("./data/stats.json", { miners: {} });
-  const seeded = {};
-  for (const [w, m] of Object.entries(stats.miners || {})) seeded[w] = { work: m.shares || 0, shares: 0, blocks: 0, lastShare: m.lastShare };
-  for (const b of readJson("./data/blocks.json", [])) if (seeded[b.miner]) seeded[b.miner].blocks++;
-  fs.writeFileSync("./data/workers.json", JSON.stringify(seeded, null, 2));
-}
 
 setInterval(refreshTemplate, 5000);
 // miners whose difficulty is too high may never submit; ease them down even without shares
@@ -830,5 +1111,5 @@ setInterval(() => {
 }, 15_000);
 refreshTemplate(true);
 
-statsServer.listen(config.statsPort || 8081, "0.0.0.0", () => console.log(`Saturn pool stats API listening on ${config.statsPort || 8081}`));
+statsServer.listen(config.statsPort || 8081, LISTEN_HOST, () => console.log(`Saturn pool stats API listening on ${config.statsPort || 8081}`));
 server.listen(config.stratumPort, "0.0.0.0", () => console.log(`Saturn stratum listening on ${config.stratumPort}`));

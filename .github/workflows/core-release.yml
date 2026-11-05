@@ -1,0 +1,147 @@
+# Builds Saturn Core's node (saturnd) and command-line client (saturn-cli) for Windows, macOS
+# (Apple silicon + Intel) and Linux, and publishes them with SHA256SUMS as a release.
+#
+# The Saturn desktop app downloads these archives to run a full node on the user's computer, and
+# checks each download against SHA256SUMS. Archive names are fixed (the app looks them up by name):
+#   saturn-core-<version>-x86_64-linux-gnu.tar.gz
+#   saturn-core-<version>-arm64-apple-darwin.tar.gz
+#   saturn-core-<version>-x86_64-apple-darwin.tar.gz
+#   saturn-core-<version>-win64.zip
+# Each holds saturnd and saturn-cli at its top level.
+#
+# To publish a new build: update CORE_VERSION and CORE_TAG, then push to a branch named release-core-*.
+name: core-release
+
+on:
+  push:
+    branches:
+      - 'release-core-*'
+
+env:
+  CORE_VERSION: 32.1-saturn2
+  CORE_TAG: core-v32.1-saturn2
+  DEPENDS_FLAGS: NO_QT=1 NO_QR=1 NO_ZMQ=1 NO_USDT=1 NO_IPC=1
+  CMAKE_FLAGS: -DBUILD_GUI=OFF -DENABLE_IPC=OFF -DBUILD_TESTS=OFF -DBUILD_BENCH=OFF -DBUILD_FUZZ_BINARY=OFF -DWITH_ZMQ=OFF -DWITH_USDT=OFF -DBUILD_TX=OFF -DBUILD_UTIL=OFF -DBUILD_WALLET_TOOL=OFF -DREDUCE_EXPORTS=ON
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64-linux-gnu
+            runner: ubuntu-22.04 # glibc 2.35, so it runs on Ubuntu 22.04 and newer
+            host: x86_64-pc-linux-gnu
+            make_env: CC=gcc-12 CXX=g++-12
+          - name: win64
+            runner: ubuntu-24.04
+            host: x86_64-w64-mingw32
+            make_env: ''
+          - name: arm64-apple-darwin
+            runner: macos-latest
+            host: arm64-apple-darwin
+            make_env: ''
+          - name: x86_64-apple-darwin
+            runner: macos-latest
+            host: x86_64-apple-darwin
+            make_env: ''
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build tools (Linux)
+        if: matrix.name == 'x86_64-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-12 g++-12 cmake make patch pkg-config curl bison
+      - name: Build tools (Windows cross-compiler)
+        if: matrix.name == 'win64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-mingw-w64-x86-64-posix cmake make patch pkg-config curl zip bison
+      - name: Build tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake make ninja || true
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            depends/built
+            depends/sources
+          key: depends-${{ matrix.host }}-${{ hashFiles('depends/packages/*.mk', 'depends/Makefile', 'depends/hosts/*.mk', 'depends/builders/*.mk') }}
+
+      - name: Build dependencies
+        run: |
+          MAKE=make; command -v gmake >/dev/null && MAKE=gmake
+          $MAKE -C depends -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu)" HOST=${{ matrix.host }} $DEPENDS_FLAGS ${{ matrix.make_env }}
+
+      - name: Build saturnd and saturn-cli
+        run: |
+          cmake -B build --toolchain "$PWD/depends/${{ matrix.host }}/toolchain.cmake" -DCMAKE_BUILD_TYPE=Release $CMAKE_FLAGS
+          cmake --build build -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu)" --target saturnd saturn-cli
+
+      - name: Package
+        run: |
+          set -e
+          name="saturn-core-${CORE_VERSION}-${{ matrix.name }}"
+          mkdir -p "pkg/$name" out
+          if [ "${{ matrix.name }}" = win64 ]; then
+            cp build/bin/saturnd.exe build/bin/saturn-cli.exe "pkg/$name/"
+            x86_64-w64-mingw32-strip "pkg/$name/"*.exe
+            (cd "pkg/$name" && zip -9 "../../out/$name.zip" saturnd.exe saturn-cli.exe)
+          else
+            cp build/bin/saturnd build/bin/saturn-cli "pkg/$name/"
+            strip "pkg/$name/saturnd" "pkg/$name/saturn-cli" || true
+            if [ "$RUNNER_OS" = macOS ]; then
+              codesign --force -s - "pkg/$name/saturnd" "pkg/$name/saturn-cli"
+              lipo -info "pkg/$name/saturnd"
+            else
+              file "pkg/$name/saturnd"
+            fi
+            tar -C "pkg/$name" -czf "out/$name.tar.gz" saturnd saturn-cli
+          fi
+          ls -l out
+
+      - name: Smoke test
+        if: matrix.name == 'x86_64-linux-gnu' || matrix.name == 'arm64-apple-darwin'
+        run: |
+          build/bin/saturnd -version | head -1
+          dir=$(mktemp -d)
+          build/bin/saturnd -regtest -datadir="$dir" -daemon -rpcport=19998 -port=19999
+          for i in $(seq 30); do build/bin/saturn-cli -regtest -datadir="$dir" -rpcport=19998 getblockcount 2>/dev/null && break; sleep 1; done
+          build/bin/saturn-cli -regtest -datadir="$dir" -rpcport=19998 stop
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: out/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd out
+          sha256sum saturn-core-* > SHA256SUMS
+          cat SHA256SUMS
+          notes="Saturn Core ${CORE_VERSION}: the Saturn node (saturnd) and command-line client (saturn-cli) for Windows, macOS and Linux.
+
+          SegWit, CSV and BIP34/65/66 are active from block 7. The Saturn desktop app downloads these to run a full node on your computer; you can also run saturnd yourself. Verify a download with: sha256sum -c SHA256SUMS --ignore-missing"
+          if gh release view "$CORE_TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$CORE_TAG" -R "$GITHUB_REPOSITORY" --clobber saturn-core-* SHA256SUMS
+          else
+            gh release create "$CORE_TAG" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false --title "Saturn Core ${CORE_VERSION}" --notes "$notes" saturn-core-* SHA256SUMS
+          fi

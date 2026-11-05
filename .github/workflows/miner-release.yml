@@ -13,8 +13,8 @@ on:
 
 env:
   MINER_REPO: saturn-cash/saturn-miner-v0.3.0
-  MINER_REF: 614c26543ffcca5bbfc18e4d898c943942f24ef7 # Saturn 0.8.0
-  MINER_TAG: miner-v0.8.0
+  MINER_REF: 7575f8d89e2655a06d2e339d6a46afd5188bbbf8 # Saturn 0.8.1
+  MINER_TAG: miner-v0.8.1
 
 jobs:
   build:
@@ -87,7 +87,11 @@ jobs:
             - **Mac (Intel)**: the `x64.dmg`
             - **Linux**: the `.AppImage` (any distro), `.deb` (Ubuntu/Debian) or `.rpm` (Fedora)
 
-            **What's new in 0.8.0**
+            **What's new in 0.8.1**
+            - **One living Saturn.** The Cassini photos are AI-upscaled 4x (7680 px) and Saturn now moves: the rings glint and drift, spokes pass over them, an aurora glows at the north pole as you mine, every share sends a ripple through the rings, and launches and found blocks cross into Saturn's shadow with the sun behind it. Flying between screens is one continuous camera move instead of a slideshow.
+            - **Cobwebs.** Leave the reactor idle and it gathers dust and spider webs. Proof of work, the old way. Hit Start and they tear away.
+
+            **New in 0.8.0**
             - **Real Saturn.** The backgrounds are real photos of Saturn taken by NASA's Cassini spacecraft, with the live stars, comets, warp and block-found supernova on top. Each screen frames a different part of Saturn and flights pan and zoom across it. Prefer the 3D model? Settings → Real Saturn.
             - **Solo on my node.** A third mining mode with no pool at all: work comes straight from the Saturn Core node on your computer and any block you find goes straight to it.
             - **A new share ping**: short and bright. A mute button sits at the top left of every screen and on Mission control; Settings has Sound, Share ping and Block-found celebration switches. Muting keeps the animations; turning the celebration off keeps the bell.

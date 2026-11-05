@@ -13,8 +13,8 @@ on:
 
 env:
   MINER_REPO: saturn-cash/saturn-miner-v0.3.0
-  MINER_REF: fef2148f3feacdcb691092b564be90e8c5d048bc # Saturn 0.7.0
-  MINER_TAG: miner-v0.7.0
+  MINER_REF: 614c26543ffcca5bbfc18e4d898c943942f24ef7 # Saturn 0.8.0
+  MINER_TAG: miner-v0.8.0
 
 jobs:
   build:
@@ -87,7 +87,12 @@ jobs:
             - **Mac (Intel)**: the `x64.dmg`
             - **Linux**: the `.AppImage` (any distro), `.deb` (Ubuntu/Debian) or `.rpm` (Fedora)
 
-            **What's new in 0.7.0**
+            **What's new in 0.8.0**
+            - **Real Saturn.** The backgrounds are real photos of Saturn taken by NASA's Cassini spacecraft, with the live stars, comets, warp and block-found supernova on top. Each screen frames a different part of Saturn and flights pan and zoom across it. Prefer the 3D model? Settings → Real Saturn.
+            - **Solo on my node.** A third mining mode with no pool at all: work comes straight from the Saturn Core node on your computer and any block you find goes straight to it.
+            - **A new share ping**: short and bright. A mute button sits at the top left of every screen and on Mission control; Settings has Sound, Share ping and Block-found celebration switches. Muting keeps the animations; turning the celebration off keeps the bell.
+
+            **New in 0.7.0**
             - **Run a full Saturn node.** Turn on "Saturn node on this computer" on the Network screen and the app downloads Saturn Core, checks it, and runs it: your own copy of the chain, real peers and blocks, and one more node keeping the network alive. It starts with Saturn and shuts down cleanly when you quit.
             - **Solo mining.** Pick Solo on the Mining screen: any block you find pays its whole reward straight to your address instead of being split with the pool.
 

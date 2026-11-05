@@ -13,8 +13,8 @@ on:
 
 env:
   MINER_REPO: saturn-cash/saturn-miner-v0.3.0
-  MINER_REF: b624ea0d1b61f8c7063153913598916e4c7cecdc # Saturn 0.6.1
-  MINER_TAG: miner-v0.6.1
+  MINER_REF: f6ebf47a6aac5d68ff665482382c09b62f471f4a # Saturn 0.6.2
+  MINER_TAG: miner-v0.6.2
 
 jobs:
   build:
@@ -86,7 +86,12 @@ jobs:
             - **Mac (Intel)**: the `x64.dmg`
             - **Linux**: the `.AppImage` (any distro), `.deb` (Ubuntu/Debian) or `.rpm` (Fedora)
 
-            **What's new in 0.6.1**
+            **What's new in 0.6.2**
+            - **Multiple wallets.** Keep several, switch between them and rename them. Add one by creating it, restoring a recovery phrase, or importing it from Saturn Core, so the address your miner already pays can be spent here.
+            - **Multiple addresses.** Each wallet hands out as many receive addresses as you like, and any of them can be your mining payout address.
+            - **Bitaxe scan that finds it.** The scan now searches every network your computer can reach, not just the first adapter Windows reports, and tells you which networks it checked.
+
+            **New in 0.6.1**
             - A new, minimal launch screen.
 
             **New in 0.6.0**

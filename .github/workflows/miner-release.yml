@@ -1,0 +1,100 @@
+# Publishes Saturn Miner installers as a release of this repository.
+#
+# The app's source lives in saturn-cash/saturn-miner-v0.3.0; this workflow builds a pinned commit of it
+# for Windows, macOS (Apple silicon + Intel) and Linux and attaches the installers to the release
+# named below. To ship a new miner version: update MINER_REF and MINER_TAG, then push to a branch
+# named release-miner-*.
+name: miner-release
+
+on:
+  push:
+    branches:
+      - 'release-miner-*'
+
+env:
+  MINER_REPO: saturn-cash/saturn-miner-v0.3.0
+  MINER_REF: 64c0576e225fdadac3cead1e7837a831d9ec5e3e # Saturn Miner 0.5.0
+  MINER_TAG: miner-v0.5.0
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest # Apple silicon (M1 and newer)
+            args: --target aarch64-apple-darwin
+          - platform: macos-latest # Intel Macs
+            args: --target x86_64-apple-darwin
+          - platform: ubuntu-22.04 # .deb, .rpm and .AppImage
+            args: ''
+          - platform: windows-latest # .msi and setup .exe
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ env.MINER_REPO }}
+          ref: ${{ env.MINER_REF }}
+          path: miner
+
+      - name: Linux build dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: miner/package.json
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: pnpm
+          cache-dependency-path: miner/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './miner/src-tauri -> target'
+
+      - name: Install frontend dependencies
+        working-directory: miner
+        run: pnpm install --frozen-lockfile
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: miner
+          tagName: ${{ env.MINER_TAG }}
+          releaseName: 'Saturn Miner v__VERSION__'
+          releaseCommitish: ${{ github.sha }}
+          releaseBody: |
+            The desktop miner for the Saturn (SAT) network. It mines real Saturn through Saturn Pool and shows the live chain and your pool earnings.
+
+            **Download the installer for your computer:**
+            - **Windows**: the `.msi` or `-setup.exe`
+            - **Mac (M1/M2/M3/M4)**: the `aarch64.dmg`
+            - **Mac (Intel)**: the `x64.dmg`
+            - **Linux**: the `.AppImage` (any distro), `.deb` (Ubuntu/Debian) or `.rpm` (Fedora)
+
+            **What's new in 0.5.0**
+            - A redesign that looks and feels like a native Mac app: system fonts, sidebar, glass panels and the rainbow hexagon
+            - Real network data without running your own node: block height, difficulty, network hashrate and your pending pool payout come straight from Saturn Pool
+            - No placeholder coins: every wallet starts at 0 and only shows what you've actually mined
+            - New Saturn logo, smoother animations, and Bitaxe setup from the Hardware screen
+
+            **Start mining:** open the app, paste your `sat1…` address on the Mining screen and press the hexagon. Pool: `stratum+tcp://pool.saturn.boats:3333`. Stats: http://pool.saturn.boats:8081
+
+            On a Mac the first launch needs right-click → Open, because the app isn't notarised yet.
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

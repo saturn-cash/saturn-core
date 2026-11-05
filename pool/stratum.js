@@ -591,6 +591,12 @@ async function handleSubmit(c, msg) {
   const [, jobId, en2Hex, ntimeHex, nonceHex, versionBitsHex] = msg.params || [];
   const reject = (code, text, bad = true) => {
     c.rejected++;
+    // all-time count per worker, shown in the pool's miner list
+    const w = c.worker && db.workers[c.worker];
+    if (w) {
+      w.rejected = (w.rejected || 0) + 1;
+      save("workers");
+    }
     if (bad) junk(c);
     if (c.rejected <= 50 || c.rejected % 100 === 0) console.log(`share rejected from ${c.worker || c.ip}: ${text} (job ${jobId})`);
     send(c.socket, { id: msg.id, result: false, error: [code, text, null] });

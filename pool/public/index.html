@@ -96,7 +96,7 @@ section { scroll-margin-top: 68px; }
 .section-title { margin: 52px 0 14px; font: 600 22px/1.2 var(--display); letter-spacing: -0.02em; }
 .section-title small { display: block; margin-top: 4px; font: 400 13px var(--sans); color: var(--secondary); letter-spacing: 0; }
 
-.tiles { display: grid; grid-template-columns: repeat(4, 1fr); }
+.tiles { display: grid; grid-template-columns: repeat(5, 1fr); }
 .tiles > div { padding: 16px 20px; }
 .tiles > div + div { box-shadow: -0.5px 0 0 var(--separator); }
 .label { font-size: 12px; color: var(--secondary); }
@@ -235,6 +235,7 @@ footer a:hover { color: var(--secondary); }
   .tiles { grid-template-columns: repeat(2, 1fr); }
   .tiles > div:nth-child(3) { box-shadow: 0 -0.5px 0 var(--separator); }
   .tiles > div:nth-child(4) { box-shadow: -0.5px 0 0 var(--separator), 0 -0.5px 0 var(--separator); }
+  .tiles > div:nth-child(5) { grid-column: 1 / -1; box-shadow: 0 -0.5px 0 var(--separator); }
   #planet { width: 150vw; transform: translate(-30%, -62%); }
   #planet.ready { opacity: .5; }
 }
@@ -324,6 +325,7 @@ footer a:hover { color: var(--secondary); }
     <section class="glass tiles reveal" aria-label="Pool totals">
       <div><div class="label">Blocks found</div><div class="value" id="t-blocks">—</div><div class="sub" id="t-blocks-sub">&nbsp;</div></div>
       <div><div class="label">Shares found</div><div class="value" id="t-shares">—</div><div class="sub" id="t-shares-sub">By every miner, all time</div></div>
+      <div><div class="label">Rejected</div><div class="value" id="t-rej">—</div><div class="sub" id="t-rej-sub">&nbsp;</div></div>
       <div><div class="label">Difficulty</div><div class="value" id="t-diff">—</div><div class="sub" id="t-diff-sub">&nbsp;</div></div>
       <div><div class="label">Block reward</div><div class="value" id="t-reward">— <small>SAT</small></div><div class="sub">Split by work, 0% fee</div></div>
     </section>
@@ -371,7 +373,7 @@ footer a:hover { color: var(--secondary); }
       <div class="glass card reveal" style="--d:.08s">
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Worker</th><th>Status</th><th class="n">Hashrate</th><th class="n">Shares found</th><th class="n">Difficulty</th><th class="n">Work this round</th><th class="n">Blocks</th><th class="n">Pending</th><th class="n">Last share</th></tr></thead>
+            <thead><tr><th>Worker</th><th>Status</th><th class="n">Hashrate</th><th class="n">Shares found</th><th class="n">Rejected</th><th class="n">Difficulty</th><th class="n">Work this round</th><th class="n">Blocks</th><th class="n">Pending</th><th class="n">Last share</th></tr></thead>
             <tbody id="miners-body"></tbody>
           </table>
         </div>
@@ -569,6 +571,12 @@ footer a:hover { color: var(--secondary); }
     const liveAccepted = online.reduce((a, m) => a + (m.accepted || 0), 0);
     const totalShares = Object.values(workers).reduce((a, w) => a + (w.shares || 0), 0) || liveAccepted;
     $('t-shares').textContent = int(totalShares);
+    const liveRejected = online.reduce((a, m) => a + (m.rejected || 0), 0);
+    const totalRejected = Math.max(Object.values(workers).reduce((a, w) => a + (w.rejected || 0), 0), liveRejected);
+    const rejPct = totalRejected + totalShares > 0 ? (totalRejected / (totalRejected + totalShares)) * 100 : 0;
+    $('t-rej').innerHTML = `${int(totalRejected)} <small>${rejPct < 0.1 ? (totalRejected ? '<0.1' : '0') : rejPct.toFixed(1)}%</small>`;
+    $('t-rej').style.color = rejPct > 5 ? 'var(--bad)' : rejPct > 2 ? 'var(--warn)' : '';
+    $('t-rej-sub').textContent = rejPct > 5 ? 'High: check miners’ connection' : 'Stale or invalid shares, all time';
     $('t-reward').innerHTML = `${s.reward != null ? sat(s.reward) : '—'} <small>SAT</small>`;
     $('t-diff').textContent = nextDiff != null ? compact(nextDiff) : '—';
     $('t-diff-sub').textContent = nextDiff != null ? `For block ${int(s.height)}, retargets every block` : ' ';
@@ -616,7 +624,13 @@ footer a:hover { color: var(--secondary); }
         <td><div class="worker"><span class="avatar hex ${m ? 'spectrum-fill' : 'off'}">${esc(initials(name))}</span><span class="who"><b>${esc(name || 'default')}</b><span title="${esc(addr)}">${esc(short(addr))}</span></span></div></td>
         <td data-label="Status"><span class="status"><i class="dot ${m ? 'on' : ''}"></i>${m ? 'Online' : '<span class="dim">Offline</span>'}</span></td>
         <td class="n" data-label="Hashrate">${m ? (m.hashrate ? rate(m.hashrate) : '<span class="dim">measuring…</span>') : '<span class="dim">—</span>'}</td>
-        <td class="n" data-label="Shares found"><span class="shares">${int(found)}</span>${m && m.rejected ? ` <span style="color:var(--warn)" title="rejected this session">· ${int(m.rejected)} rejected</span>` : ''}</td>
+        <td class="n" data-label="Shares found"><span class="shares">${int(found)}</span></td>
+        <td class="n" data-label="Rejected">${(() => {
+          const rej = Math.max(all.rejected || 0, m ? m.rejected : 0);
+          if (!rej) return '<span class="dim">0</span>';
+          const pct = (rej / (rej + found)) * 100;
+          return `<span style="color:${pct > 5 ? 'var(--bad)' : 'var(--warn)'}" title="Shares the pool turned down (stale work after a new block, duplicates or too easy). Under 2% is normal.">${int(rej)} <span class="dim">· ${pct < 0.1 ? '<0.1' : pct.toFixed(1)}%</span></span>`;
+        })()}</td>
         <td class="n hide-sm">${m ? compact(m.difficulty) : '<span class="dim">—</span>'}</td>
         <td class="n hide-sm" title="Difficulty-weighted work since the last block">${compact(rd.shares || 0)}</td>
         <td class="n" data-label="Blocks">${int(all.blocks || 0)}</td>

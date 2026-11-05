@@ -332,14 +332,14 @@ footer a:hover { color: var(--secondary); }
     </div>
 
     <section class="glass card full rise" style="animation-delay:.38s">
-      <div class="card-head"><h2>Miners</h2><span class="aside">Live, last 10 minutes</span></div>
+      <div class="card-head"><h2>Miners</h2><span class="aside" id="miners-aside">Everyone who has mined here</span></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Worker</th><th class="n">Hashrate</th><th class="n">Difficulty</th><th class="n">Accepted</th><th class="n">Rejected</th><th class="n">Connected</th></tr></thead>
+          <thead><tr><th>Worker</th><th class="n">Hashrate</th><th class="n">Difficulty</th><th class="n">Shares</th><th class="n">This round</th><th class="n">Blocks</th><th class="n">Pending</th><th class="n">Last share</th></tr></thead>
           <tbody id="miners"></tbody>
         </table>
       </div>
-      <div class="empty" id="miners-empty" hidden>No miners connected right now.</div>
+      <div class="empty" id="miners-empty" hidden>No one has mined here yet.</div>
     </section>
 
     <div class="grid">
@@ -480,12 +480,13 @@ footer a:hover { color: var(--secondary); }
       : 'Pool is up. No miners connected yet.';
 
     $('s-miners').textContent = int(miners.length);
-    $('s-miners-sub').textContent = `${int(Object.keys(s.miners || {}).length)} workers all-time`;
+    $('s-miners-sub').textContent = `${int(Object.keys(s.workers || s.miners || {}).length)} workers all-time`;
     const blocks = s.blocks || [];
     $('s-blocks').textContent = int(blocks.length);
     $('s-blocks-sub').textContent = blocks[0] ? `Last ${ago(blocks[0].time)}` : 'None yet';
     const net = s.network || {};
-    $('s-diff').textContent = net.difficulty != null ? compact(net.difficulty) : '—';
+    const nextDiff = net.nextDifficulty ?? net.difficulty;
+    $('s-diff').textContent = nextDiff != null ? compact(nextDiff) : '—';
     $('s-diff-sub').textContent = net.difficulty != null ? 'Retargets every block' : ' ';
     $('s-reward').textContent = s.reward != null ? (+s.reward.toFixed(8)).toLocaleString('en-US') : '—';
 
@@ -495,26 +496,33 @@ footer a:hover { color: var(--secondary); }
     $('n-hash').textContent = net.hashrate ? rate(net.hashrate) : '—';
     const share = net.hashrate ? Math.min(1, poolHash / net.hashrate) : null;
     $('n-share').textContent = share != null && poolHash ? (share * 100).toFixed(share > 0.995 ? 0 : 1) + '%' : '—';
-    $('n-eta').textContent = poolHash && net.difficulty ? duration((net.difficulty * 2 ** 32) / poolHash) : '—';
+    $('n-eta').textContent = poolHash && nextDiff ? duration((nextDiff * 2 ** 32) / poolHash) : '—';
     $('n-updated').textContent = net.updated ? `Updated ${ago(new Date(net.updated).toISOString())}` : '';
 
-    // miners table
-    const body = $('miners');
-    body.innerHTML = miners
-      .slice()
-      .sort((a, b) => (b.hashrate || 0) - (a.hashrate || 0))
-      .map((m) => {
-        const [addr, name] = String(m.worker).split('.');
-        return `<tr>
-          <td><div class="worker"><span class="dot on"></span><b>${esc(name || 'default')}</b><span class="addr" title="${esc(addr)}">${esc(short(addr))}</span></div></td>
-          <td class="n">${m.hashrate ? rate(m.hashrate) : '<span style="color:var(--tertiary)">measuring…</span>'}</td>
-          <td class="n">${compact(m.difficulty)}</td>
-          <td class="n">${int(m.accepted)}</td>
-          <td class="n" style="color:${m.rejected ? 'var(--warn)' : 'inherit'}">${int(m.rejected)}</td>
-          <td class="n" style="color:var(--secondary)">${m.since ? ago(m.since).replace(' ago', '') : '—'}</td>
-        </tr>`;
-      }).join('');
-    $('miners-empty').hidden = miners.length > 0;
+    // every worker that has ever mined here, online ones first
+    const live = new Map(miners.map((m) => [m.worker, m]));
+    const workers = s.workers || {};
+    const round = s.miners || {};
+    const known = new Set([...Object.keys(workers), ...Object.keys(round), ...live.keys()]);
+    const rows = [...known].map((w) => ({ worker: w, live: live.get(w), all: workers[w] || {}, round: round[w] || {} }));
+    rows.sort((a, b) => (!!b.live - !!a.live) || ((b.live?.hashrate || 0) - (a.live?.hashrate || 0)) || ((b.all.work || 0) - (a.all.work || 0)));
+    const pend = s.pending || {};
+    $('miners').innerHTML = rows.map(({ worker, live: m, all, round: rd }) => {
+      const [addr, name] = String(worker).split('.');
+      const dim = 'style="color:var(--tertiary)"';
+      return `<tr>
+        <td><div class="worker"><span class="dot ${m ? 'on' : ''}" title="${m ? 'Online' : 'Offline'}"></span><b>${esc(name || 'default')}</b><span class="addr" title="${esc(addr)}">${esc(short(addr))}</span></div></td>
+        <td class="n">${m ? (m.hashrate ? rate(m.hashrate) : `<span ${dim}>measuring…</span>`) : `<span ${dim}>offline</span>`}</td>
+        <td class="n">${m ? compact(m.difficulty) : `<span ${dim}>—</span>`}</td>
+        <td class="n">${int(all.shares || (m ? m.accepted : 0))}${m && m.rejected ? ` <span style="color:var(--warn)" title="rejected this session">/ ${int(m.rejected)}</span>` : ''}</td>
+        <td class="n" title="difficulty-weighted work since the last block">${compact(rd.shares || 0)}</td>
+        <td class="n">${int(all.blocks || 0)}</td>
+        <td class="n">${pend[addr] ? (+pend[addr].toFixed(4)).toLocaleString('en-US') : `<span ${dim}>0</span>`}</td>
+        <td class="n" style="color:var(--secondary)">${(all.lastShare || rd.lastShare) ? ago(all.lastShare || rd.lastShare) : '—'}</td>
+      </tr>`;
+    }).join('');
+    $('miners-empty').hidden = rows.length > 0;
+    $('miners-aside').textContent = `${miners.length} online · ${rows.length} total`;
 
     // blocks
     $('blocks').innerHTML = blocks.length
@@ -522,7 +530,7 @@ footer a:hover { color: var(--secondary); }
           <span class="hexi hex spectrum-fill" data-speed="slow"></span>
           <div class="meta"><div><b>Block ${int(b.height)}</b> <span style="color:var(--secondary)">· ${(+b.reward).toLocaleString('en-US')} SAT · ${esc(String(b.miner).split('.')[1] || short(String(b.miner)))}</span></div><div title="${esc(b.hash)}">${esc(b.hash)}</div></div>
           <span class="when">${ago(b.time)}</span></div>`).join('')
-      : `<div class="empty">No blocks yet. The first one is ${poolHash && net.difficulty ? 'expected in about ' + duration((net.difficulty * 2 ** 32) / poolHash) : 'on its way'}.</div>`;
+      : `<div class="empty">No blocks yet. The first one is ${poolHash && nextDiff ? 'expected in about ' + duration((nextDiff * 2 ** 32) / poolHash) : 'on its way'}.</div>`;
 
     // payouts
     const pending = Object.entries(s.pending || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);

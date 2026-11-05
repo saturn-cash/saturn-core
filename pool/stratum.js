@@ -53,6 +53,11 @@ function readJson(file, fallback) {
 }
 
 function recordBlock(worker, height, reward, hash) {
+  const workers = readJson("./data/workers.json", {});
+  if (workers[worker]) {
+    workers[worker].blocks = (workers[worker].blocks || 0) + 1;
+    fs.writeFileSync("./data/workers.json", JSON.stringify(workers, null, 2));
+  }
   const file = "./data/blocks.json";
   const blocks = readJson(file, []);
   blocks.unshift({ height, miner: worker, reward, hash, time: new Date().toISOString() });
@@ -93,6 +98,14 @@ function recordShare(worker, difficulty) {
   stats.miners[worker].shares += difficulty;
   stats.miners[worker].lastShare = new Date().toISOString();
   fs.writeFileSync(file, JSON.stringify(stats, null, 2));
+  // all-time record per worker; stats.json is the current round and resets at every block
+  const wfile = "./data/workers.json";
+  const workers = readJson(wfile, {});
+  const w = (workers[worker] = workers[worker] || { work: 0, shares: 0, blocks: 0, firstSeen: new Date().toISOString() });
+  w.work += difficulty;
+  w.shares += 1;
+  w.lastShare = stats.miners[worker].lastShare;
+  fs.writeFileSync(wfile, JSON.stringify(workers, null, 2));
 }
 
 /* ------------------------------------------------------------------ */
@@ -570,11 +583,13 @@ function handleHttp(req, res) {
         {
           totalShares: stats.totalShares || 0,
           miners: stats.miners || {},
+          workers: readJson("./data/workers.json", {}),
           blocks,
           connected: [...clients].filter((c) => c.authorized).map((c) => ({ worker: c.worker, difficulty: c.difficulty, accepted: c.accepted, rejected: c.rejected, hashrate: liveHashrate(c), since: new Date(c.since).toISOString() })),
           hashrate: [...clients].filter((c) => c.authorized).reduce((a, c) => a + liveHashrate(c), 0),
           height: template?.height ?? null,
-          network,
+          // difficulty of the block being mined now (getmininginfo reports the tip's)
+          network: { ...network, nextDifficulty: template ? Number(DIFF1_TARGET) / Number(targetFromBits(template.bits)) : null },
           reward: template ? template.coinbasevalue / 1e8 : null,
           pending: payouts.pending || {},
           paid: (payouts.paid || []).slice(-10),
@@ -613,6 +628,15 @@ const statsServer = http.createServer(handleHttp);
 // optional second port for the website (e.g. 80), same pages and API
 if (config.sitePort) {
   http.createServer(handleHttp).listen(config.sitePort, "0.0.0.0", () => console.log(`Saturn pool website listening on ${config.sitePort}`)).on("error", (e) => console.error(`website port ${config.sitePort}:`, e.message));
+}
+
+// first run with the all-time worker list: seed it from the current round and the blocks found so far
+if (!fs.existsSync("./data/workers.json")) {
+  const stats = readJson("./data/stats.json", { miners: {} });
+  const seeded = {};
+  for (const [w, m] of Object.entries(stats.miners || {})) seeded[w] = { work: m.shares || 0, shares: 0, blocks: 0, lastShare: m.lastShare };
+  for (const b of readJson("./data/blocks.json", [])) if (seeded[b.miner]) seeded[b.miner].blocks++;
+  fs.writeFileSync("./data/workers.json", JSON.stringify(seeded, null, 2));
 }
 
 setInterval(refreshTemplate, 5000);

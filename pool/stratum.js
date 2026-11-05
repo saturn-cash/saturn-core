@@ -419,6 +419,9 @@ const server = net.createServer((socket) => {
       } catch {
         continue;
       }
+      if (!c.authorized && (c.logged = (c.logged || 0) + 1) <= 6) {
+        console.log(`from ${socket.remoteAddress}: ${msg.method || "response"} ${JSON.stringify(msg.params ?? msg.result ?? "").slice(0, 160)}`);
+      }
       try {
         switch (msg.method) {
           case "mining.configure": {
@@ -452,9 +455,15 @@ const server = net.createServer((socket) => {
             send(socket, { id: msg.id, result: true, error: null });
             break;
           case "mining.authorize": {
-            const worker = String(msg.params?.[0] || "");
-            const address = worker.split(".")[0];
+            // phones auto-capitalise ("Sat1q…") and add stray spaces; addresses are case-insensitive,
+            // so normalise to the canonical lowercase form instead of refusing the miner
+            const raw = String(msg.params?.[0] || "").trim();
+            const dot = raw.indexOf(".");
+            const address = (dot < 0 ? raw : raw.slice(0, dot)).toLowerCase();
+            const workerName = dot < 0 ? "" : raw.slice(dot + 1).trim();
+            const worker = workerName ? `${address}.${workerName}` : address;
             if (!/^sat1[02-9ac-hj-np-z]{8,87}$/.test(address)) {
+              console.log(`login refused from ${socket.remoteAddress}: username ${JSON.stringify(raw)} is not a sat1 address`);
               send(socket, { id: msg.id, result: false, error: [24, "username must be your sat1… address (optionally .workername)", null] });
               break;
             }

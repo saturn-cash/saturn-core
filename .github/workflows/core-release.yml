@@ -37,12 +37,14 @@ jobs:
             runner: ubuntu-24.04
             host: x86_64-w64-mingw32
             make_env: ''
+          # both Mac builds come from an Intel runner (Apple silicon runners are often short on capacity);
+          # the darwin toolchain builds either architecture with -arch
           - name: arm64-apple-darwin
-            runner: macos-latest
+            runner: macos-15-intel
             host: arm64-apple-darwin
             make_env: ''
           - name: x86_64-apple-darwin
-            runner: macos-latest
+            runner: macos-15-intel
             host: x86_64-apple-darwin
             make_env: ''
     runs-on: ${{ matrix.runner }}
@@ -107,7 +109,7 @@ jobs:
           ls -l out
 
       - name: Smoke test
-        if: matrix.name == 'x86_64-linux-gnu' || matrix.name == 'arm64-apple-darwin'
+        if: matrix.name == 'x86_64-linux-gnu' || matrix.name == 'x86_64-apple-darwin'
         run: |
           build/bin/saturnd -version | head -1
           dir=$(mktemp -d)

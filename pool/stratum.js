@@ -189,6 +189,10 @@ function merkleBranches(txids) {
 /* jobs                                                                */
 /* ------------------------------------------------------------------ */
 
+// Segwit data is only allowed once the chain has activated it (getblocktemplate lists it in
+// "rules"). Before that, a coinbase witness makes the node reject the block as "unexpected-witness".
+const witnessActive = (t) => !!t.default_witness_commitment && (t.rules || []).some((r) => r.replace(/^!/, "") === "segwit");
+
 function buildJob(t, clean) {
   const id = (nextJobId++).toString(16);
   const scriptPrefix = heightScript(t.height);
@@ -197,7 +201,7 @@ function buildJob(t, clean) {
   if (scriptLen > 100) throw new Error("coinbase script too long");
 
   const outputs = [Buffer.concat([u64le(t.coinbasevalue), varint(payoutScript.length / 2), Buffer.from(payoutScript, "hex")])];
-  if (t.default_witness_commitment) {
+  if (witnessActive(t)) {
     const c = Buffer.from(t.default_witness_commitment, "hex");
     outputs.push(Buffer.concat([u64le(0), varint(c.length), c]));
   }
@@ -391,7 +395,7 @@ async function handleSubmit(c, msg) {
     const blockHash = reverse(hash).toString("hex");
     console.log(`BLOCK FOUND at height ${t.height} by ${c.worker}: ${blockHash}`);
     // full block: header, tx count, coinbase in witness form (marker, flag, 32-byte reserved value), template txs
-    const witnessCoinbase = t.default_witness_commitment
+    const witnessCoinbase = witnessActive(t)
       ? Buffer.concat([coinbase.subarray(0, 4), Buffer.from([0, 1]), coinbase.subarray(4, coinbase.length - 4), Buffer.from([1, 32]), Buffer.alloc(32), coinbase.subarray(coinbase.length - 4)])
       : coinbase;
     const block = Buffer.concat([header, varint(1 + job.txs.length), witnessCoinbase, ...job.txs.map((tx) => Buffer.from(tx.data, "hex"))]);

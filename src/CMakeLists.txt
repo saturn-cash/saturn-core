@@ -37,9 +37,15 @@ if(NOT CMAKE_ARCHIVE_OUTPUT_DIRECTORY)
   set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib)
 endif()
 
+set(IS_SOURCE_TARBALL FALSE)
+# git will expand the next line to "set(IS_SOURCE_TARBALL TRUE)" inside archives:
+#$Format:%nset(IS_SOURCE_TARBALL TRUE)$
+if(NOT IS_SOURCE_TARBALL AND PROJECT_IS_TOP_LEVEL)
+  find_package(Git QUIET)
+endif()
 add_custom_target(generate_build_info
   BYPRODUCTS ${PROJECT_BINARY_DIR}/src/saturn-build-info.h
-  COMMAND ${CMAKE_COMMAND} -DBUILD_INFO_HEADER_PATH=${PROJECT_BINARY_DIR}/src/saturn-build-info.h -DSOURCE_DIR=${PROJECT_SOURCE_DIR} -P ${PROJECT_SOURCE_DIR}/cmake/script/GenerateBuildInfo.cmake
+  COMMAND ${CMAKE_COMMAND} -DGIT_EXECUTABLE=${GIT_EXECUTABLE} -DBUILD_INFO_HEADER_PATH=${PROJECT_BINARY_DIR}/src/saturn-build-info.h -DSOURCE_DIR=${PROJECT_SOURCE_DIR} -P ${PROJECT_SOURCE_DIR}/cmake/script/GenerateBuildInfo.cmake
   COMMENT "Generating saturn-build-info.h"
   VERBATIM
 )
@@ -158,10 +164,10 @@ if(ENABLE_WALLET)
   if(BUILD_WALLET_TOOL)
     add_executable(saturn-wallet
       saturn-wallet.cpp
+      saturn-wallet-res.rc
       init/saturn-wallet.cpp
       wallet/wallettool.cpp
     )
-    add_windows_resources(saturn-wallet saturn-wallet-res.rc)
     add_windows_application_manifest(saturn-wallet)
     target_link_libraries(saturn-wallet
       core_interface
@@ -226,6 +232,7 @@ add_library(saturn_node STATIC EXCLUDE_FROM_ALL
   node/mempool_persist.cpp
   node/mempool_persist_args.cpp
   node/miner.cpp
+  node/mining_args.cpp
   node/mini_miner.cpp
   node/minisketchwrapper.cpp
   node/peerman_args.cpp
@@ -240,7 +247,9 @@ add_library(saturn_node STATIC EXCLUDE_FROM_ALL
   noui.cpp
   policy/ephemeral_policy.cpp
   policy/fees/block_policy_estimator.cpp
-  policy/fees/block_policy_estimator_args.cpp
+  policy/fees/estimator_args.cpp
+  policy/fees/estimator_man.cpp
+  policy/fees/mempool_estimator.cpp
   policy/packages.cpp
   policy/rbf.cpp
   policy/settings.cpp
@@ -282,10 +291,7 @@ target_link_libraries(saturn_node
     leveldb
     minisketch
     univalue
-    Boost::headers
-    $<TARGET_NAME_IF_EXISTS:libevent::core>
-    $<TARGET_NAME_IF_EXISTS:libevent::extra>
-    $<TARGET_NAME_IF_EXISTS:libevent::pthreads>
+    $<TARGET_NAME_IF_EXISTS:Boost::headers>
     $<TARGET_NAME_IF_EXISTS:USDT::headers>
 )
 if(WITH_EMBEDDED_ASMAP)
@@ -298,8 +304,10 @@ endif()
 
 # Saturn wrapper executable that can call other executables.
 if(BUILD_BITCOIN_BIN)
-  add_executable(saturn saturn.cpp)
-  add_windows_resources(saturn saturn-res.rc)
+  add_executable(saturn
+    saturn.cpp
+    saturn-res.rc
+  )
   add_windows_application_manifest(saturn)
   target_link_libraries(saturn core_interface saturn_common saturn_util)
   install_binary_component(saturn HAS_MANPAGE)
@@ -309,9 +317,9 @@ endif()
 if(BUILD_DAEMON)
   add_executable(saturnd
     saturnd.cpp
+    saturnd-res.rc
     init/saturnd.cpp
   )
-  add_windows_resources(saturnd saturnd-res.rc)
   add_windows_application_manifest(saturnd)
   target_link_libraries(saturnd
     core_interface
@@ -348,8 +356,11 @@ target_link_libraries(saturn_cli
 
 # Saturn Core RPC client
 if(BUILD_CLI)
-  add_executable(saturn-cli saturn-cli.cpp init/basic.cpp)
-  add_windows_resources(saturn-cli saturn-cli-res.rc)
+  add_executable(saturn-cli
+    saturn-cli.cpp
+    saturn-cli-res.rc
+    init/basic.cpp
+  )
   add_windows_application_manifest(saturn-cli)
   target_link_libraries(saturn-cli
     core_interface
@@ -357,16 +368,16 @@ if(BUILD_CLI)
     saturn_common
     saturn_ipc
     saturn_util
-    libevent::core
-    libevent::extra
   )
   install_binary_component(saturn-cli HAS_MANPAGE)
 endif()
 
 
 if(BUILD_TX)
-  add_executable(saturn-tx saturn-tx.cpp)
-  add_windows_resources(saturn-tx saturn-tx-res.rc)
+  add_executable(saturn-tx
+    saturn-tx.cpp
+    saturn-tx-res.rc
+  )
   add_windows_application_manifest(saturn-tx)
   target_link_libraries(saturn-tx
     core_interface
@@ -379,13 +390,16 @@ endif()
 
 
 if(BUILD_UTIL)
-  add_executable(saturn-util saturn-util.cpp)
-  add_windows_resources(saturn-util saturn-util-res.rc)
+  add_executable(saturn-util
+    saturn-util.cpp
+    saturn-util-res.rc
+  )
   add_windows_application_manifest(saturn-util)
   target_link_libraries(saturn-util
     core_interface
     saturn_common
     saturn_util
+    univalue
   )
   install_binary_component(saturn-util HAS_MANPAGE)
 endif()

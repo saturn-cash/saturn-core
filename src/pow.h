@@ -27,6 +27,8 @@ class arith_uint256;
 std::optional<arith_uint256> DeriveTarget(unsigned int nBits, uint256 pow_limit);
 
 unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHeader *pblock, const Consensus::Params&);
+/** Saturn LWMA difficulty for the block after pindexLast (pindexLast->nHeight + 1 >= params.nLWMAHeight). */
+unsigned int LwmaNextWorkRequired(const CBlockIndex* pindexLast, const Consensus::Params& params);
 unsigned int CalculateNextWorkRequired(const CBlockIndex* pindexLast, int64_t nFirstBlockTime, const Consensus::Params&);
 
 /** Check whether a block hash satisfies the proof-of-work requirement specified by nBits */

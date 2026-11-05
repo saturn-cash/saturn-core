@@ -90,6 +90,7 @@ EXTENDED_SCRIPTS = [
     'feature_pruning.py',
     'feature_dbcrash.py',
     'feature_index_prune.py',
+    'feature_utxo_abort_on_error.py',
 ]
 
 # Special script to run each bench sanity check
@@ -125,6 +126,7 @@ BASE_SCRIPTS = [
     'feature_segwit.py --v2transport',
     'feature_segwit.py --v1transport',
     'p2p_tx_download.py',
+    'feature_txindex_compatibility.py',
     'wallet_avoidreuse.py',
     'feature_abortnode.py',
     'wallet_address_types.py',
@@ -151,7 +153,9 @@ BASE_SCRIPTS = [
     'wallet_listtransactions.py',
     'wallet_miniscript.py',
     # vv Tests less than 30s vv
+    'wallet_deprecated_rbf.py',
     'p2p_invalid_messages.py',
+    'rpc_echo_payload.py',
     'rpc_createmultisig.py',
     'p2p_timeouts.py --v1transport',
     'p2p_timeouts.py --v2transport',
@@ -172,8 +176,10 @@ BASE_SCRIPTS = [
     'wallet_blank.py',
     'wallet_keypool_topup.py',
     'wallet_fast_rescan.py',
+    'wallet_derivehdkey.py',
     'wallet_gethdkeys.py',
     'wallet_createwalletdescriptor.py',
+    'wallet_exported_watchonly.py',
     'interface_zmq.py',
     'rpc_invalid_address_message.py',
     'rpc_validateaddress.py',
@@ -273,6 +279,7 @@ BASE_SCRIPTS = [
     'wallet_importprunedfunds.py',
     'p2p_leak_tx.py --v1transport',
     'p2p_leak_tx.py --v2transport',
+    'p2p_tx_relay_rate_limit.py',
     'p2p_eviction.py',
     'p2p_outbound_eviction.py',
     'p2p_ibd_stalling.py --v1transport',
@@ -300,6 +307,8 @@ BASE_SCRIPTS = [
     'wallet_listsinceblock.py',
     'wallet_listdescriptors.py',
     'p2p_leak.py',
+    'p2p_bip434_feature.py',
+    'p2p_bip434_feature.py --v2transport',
     'wallet_encryption.py',
     'feature_dersig.py',
     'feature_reindex_init.py',
@@ -312,6 +321,8 @@ BASE_SCRIPTS = [
     'feature_minchainwork.py',
     'rpc_estimatefee.py',
     'p2p_private_broadcast.py',
+    'p2p_private_broadcast_completion.py',
+    'p2p_private_broadcast_cap.py',
     'rpc_getblockstats.py',
     'feature_port.py',
     'feature_bind_port_externalip.py',
@@ -351,6 +362,7 @@ BASE_SCRIPTS = [
     'rpc_scanblocks.py',
     'tool_saturn.py',
     'p2p_sendtxrcncl.py',
+    'p2p_connection_limits.py',
     'rpc_scantxoutset.py',
     'feature_torcontrol.py',
     'feature_unsupported_utxo_db.py',
@@ -358,6 +370,7 @@ BASE_SCRIPTS = [
     'feature_logging.py',
     'interface_ipc.py',
     'interface_ipc_mining.py',
+    'interface_gui.py',
     'feature_anchors.py',
     'mempool_datacarrier.py',
     'feature_coinstatsindex.py',
@@ -368,7 +381,9 @@ BASE_SCRIPTS = [
     'p2p_permissions.py',
     'feature_blocksdir.py',
     'wallet_startup.py',
+    'p2p_private_broadcast_retry_v1.py',
     'feature_remove_pruned_files_on_startup.py',
+    'feature_prune_stale_fork.py',
     'p2p_i2p_ports.py',
     'p2p_i2p_sessions.py',
     'feature_presegwit_node_upgrade.py',
@@ -388,6 +403,8 @@ BASE_SCRIPTS = [
     'wallet_migration.py',
     'p2p_ibd_txrelay.py',
     'p2p_seednode.py',
+    'rpc_openrpc.py',
+    'wallet_ancient_migration.py',
     # Don't append tests at the end to avoid merge conflicts
     # Put them in a random line within the section that fits their approximate run-time
 ]
@@ -464,7 +481,7 @@ def main():
         assert results_filepath.parent.exists(), "Results file parent directory does not exist"
         logging.debug("Test results will be written to " + str(results_filepath))
 
-    enable_saturnd = config["components"].getboolean("ENABLE_BITCOIND")
+    enable_saturnd = config.getboolean("components", "ENABLE_BITCOIND")
 
     if not enable_saturnd:
         print("No functional tests to run.")
@@ -533,7 +550,7 @@ def main():
                 # Exclude all variants of a test
                 remove_tests([test for test in test_list if test.split('.py')[0] == exclude_test.split('.py')[0]])
 
-    if config["components"].getboolean("BUILD_BENCH") and TOOL_BENCH_SANITY_CHECK in test_list:
+    if config.getboolean("components", "BUILD_BENCH") and TOOL_BENCH_SANITY_CHECK in test_list:
         # Remove it, and expand it for each bench in the list
         test_list.remove(TOOL_BENCH_SANITY_CHECK)
         bench_cmd = Binaries(get_binary_paths(config), bin_dir=None).bench_argv() + ["-list"]
@@ -643,7 +660,7 @@ def run_tests(*, test_list, build_dir, tmpdir, jobs=1, enable_coverage=False, ar
     while not job_queue.done():
         if failfast and not all_passed:
             break
-        for test_result, testdir, stdout, stderr, skip_reason in job_queue.get_next():
+        for test_result, testdir, stdout, stderr, exit_code, skip_reason in job_queue.get_next():
             test_results.append(test_result)
             done_str = f"{len(test_results)}/{test_count} - {BOLD[1]}{test_result.name}{BOLD[0]}"
             if test_result.status == "Passed":
@@ -652,7 +669,7 @@ def run_tests(*, test_list, build_dir, tmpdir, jobs=1, enable_coverage=False, ar
                 logging.debug(f"{done_str} skipped ({skip_reason})")
             else:
                 all_passed = False
-                print("%s failed, Duration: %s s\n" % (done_str, test_result.time))
+                print(f"{done_str} failed (exit code {exit_code}), Duration: {test_result.time} s\n")
                 print(BOLD[1] + 'stdout:\n' + BOLD[0] + stdout + '\n')
                 print(BOLD[1] + 'stderr:\n' + BOLD[0] + stderr + '\n')
                 if combined_logs_len and os.path.isdir(testdir):
@@ -814,7 +831,7 @@ class TestHandler:
                     clearline = '\r' + (' ' * dot_count) + '\r'
                     print(clearline, end='', flush=True)
                 dot_count = 0
-                ret.append((TestResult(name, status, int(time.time() - start_time)), testdir, stdout, stderr, skip_reason))
+                ret.append((TestResult(name, status, int(time.time() - start_time)), testdir, stdout, stderr, proc.returncode, skip_reason))
             if ret:
                 return ret
             if self.use_term_control:

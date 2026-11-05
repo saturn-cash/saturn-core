@@ -1,0 +1,6 @@
+# Copyright (c) The Saturn Core developers
+# Distributed under the MIT software license, see the accompanying
+# file COPYING or https://opensource.org/license/mit/.
+
+target_sources(fuzz PRIVATE ${PROJECT_SOURCE_DIR}/src/ipc/test/fuzz/ipc.cpp)
+target_link_libraries(fuzz saturn_ipc_fuzz Libmultiprocess::multiprocess)

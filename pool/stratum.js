@@ -601,6 +601,10 @@ function handleHttp(req, res) {
     );
     return;
   }
+  if (urlPath === "/history") {
+    res.end(JSON.stringify(history));
+    return;
+  }
   if (parts[0] === "stats" && parts[1]) {
     const address = parts[1];
     const work = Object.entries(stats.miners || {})
@@ -629,6 +633,16 @@ const statsServer = http.createServer(handleHttp);
 if (config.sitePort) {
   http.createServer(handleHttp).listen(config.sitePort, "0.0.0.0", () => console.log(`Saturn pool website listening on ${config.sitePort}`)).on("error", (e) => console.error(`website port ${config.sitePort}:`, e.message));
 }
+
+// pool hashrate once a minute for the last 24 hours, for the chart on the website
+const HISTORY_FILE = "./data/history.json";
+let history = readJson(HISTORY_FILE, []).filter(([t]) => t > Date.now() - 86_400_000);
+setInterval(() => {
+  const h = [...clients].filter((c) => c.authorized).reduce((a, c) => a + liveHashrate(c), 0);
+  history.push([Date.now(), Math.round(h)]);
+  history = history.filter(([t]) => t > Date.now() - 86_400_000);
+}, 60_000);
+setInterval(() => fs.writeFileSync(HISTORY_FILE, JSON.stringify(history)), 5 * 60_000);
 
 // first run with the all-time worker list: seed it from the current round and the blocks found so far
 if (!fs.existsSync("./data/workers.json")) {

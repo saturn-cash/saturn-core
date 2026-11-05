@@ -193,6 +193,38 @@ footer a:hover { color: var(--secondary); }
 .roll .d .col span { display: block; height: 1em; line-height: 1; text-align: center; }
 
 .rise { opacity: 0; transform: translateY(12px); animation: rise .8s cubic-bezier(.2,.8,.2,1) forwards; }
+
+/* scroll reveal: sections drift up and sharpen as they enter, like the app's screen transitions */
+.reveal { opacity: 0; transform: translateY(28px) scale(.985); filter: blur(6px); transition: opacity .9s cubic-bezier(.16,1,.3,1), transform .9s cubic-bezier(.16,1,.3,1), filter .9s cubic-bezier(.16,1,.3,1); transition-delay: var(--d, 0s); will-change: transform, opacity; }
+.reveal.in { opacity: 1; transform: none; filter: none; }
+.glass { transition: transform .35s cubic-bezier(.2,.8,.2,1), box-shadow .35s; }
+.way:hover, .tiles > div:hover { transform: translateY(-2px); }
+.tiles > div { transition: transform .35s cubic-bezier(.2,.8,.2,1), background .25s; border-radius: 12px; }
+.tiles > div:hover { background: rgb(255 255 255 / 0.025); }
+
+/* toolbar segmented control with a sliding selection, as in the app */
+.segmented.slide { position: relative; }
+.segmented.slide > [aria-current="true"] { background: none; box-shadow: none; }
+.segmented .thumb { position: absolute; top: 2px; bottom: 2px; left: 0; border-radius: 5px; background: rgb(255 255 255 / 0.2); box-shadow: 0 0.5px 1px rgb(0 0 0 / 0.35), inset 0 0.5px 0 rgb(255 255 255 / 0.12); transition: transform .45s cubic-bezier(.3,1.3,.5,1), width .45s cubic-bezier(.3,1.3,.5,1); pointer-events: none; }
+.segmented.slide > a { position: relative; z-index: 1; }
+
+/* table rows and blocks arrive one after another */
+@keyframes row-in { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
+.row-in { animation: row-in .55s cubic-bezier(.16,1,.3,1) both; animation-delay: var(--d, 0s); }
+@keyframes pop { 0% { transform: scale(.4) rotate(-30deg); opacity: 0; } 70% { transform: scale(1.12) rotate(4deg); } 100% { transform: none; opacity: 1; } }
+.pop { animation: pop .7s cubic-bezier(.2,.8,.2,1) both; animation-delay: var(--d, 0s); }
+
+/* chart line draws itself in */
+@keyframes draw { from { stroke-dashoffset: var(--len); } to { stroke-dashoffset: 0; } }
+.chart .line.draw { stroke-dasharray: var(--len); animation: draw 1.6s cubic-bezier(.65,0,.35,1) both; }
+@keyframes fade-up { from { opacity: 0; } to { opacity: 1; } }
+.chart .area.draw { animation: fade-up 1.4s .5s ease both; }
+
+/* planet: slow drift in, parallax handled in JS */
+#planet { will-change: transform, opacity; translate: 0 var(--py, 0px); }
+#planet.ready { animation: planet-in 2.2s cubic-bezier(.16,1,.3,1) both; }
+@keyframes planet-in { from { opacity: 0; filter: blur(12px); } to { opacity: 1; filter: none; } }
+
 @keyframes rise { to { opacity: 1; transform: none; } }
 
 @media (max-width: 960px) {
@@ -227,7 +259,7 @@ footer a:hover { color: var(--secondary); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition-duration: 0s !important; }
-  .rise { opacity: 1; transform: none; }
+  .rise, .reveal { opacity: 1; transform: none; filter: none; }
   html { scroll-behavior: auto; }
 }
 </style>
@@ -253,7 +285,7 @@ footer a:hover { color: var(--secondary); }
       </svg>
       <b>Saturn Pool</b>
     </a>
-    <nav class="segmented" aria-label="Sections">
+    <nav class="segmented slide" aria-label="Sections"><span class="thumb" aria-hidden="true"></span>
       <a href="#top" data-nav="top" aria-current="true">Overview</a>
       <a href="#miners" data-nav="miners">Miners</a>
       <a href="#blocks" data-nav="blocks">Blocks</a>
@@ -286,7 +318,7 @@ footer a:hover { color: var(--secondary); }
   </div>
 
   <main>
-    <section class="glass tiles rise" style="animation-delay:.1s" aria-label="Pool totals">
+    <section class="glass tiles reveal" aria-label="Pool totals">
       <div><div class="label">Blocks found</div><div class="value" id="t-blocks">—</div><div class="sub" id="t-blocks-sub">&nbsp;</div></div>
       <div><div class="label">Shares found</div><div class="value" id="t-shares">—</div><div class="sub" id="t-shares-sub">By every miner, all time</div></div>
       <div><div class="label">Difficulty</div><div class="value" id="t-diff">—</div><div class="sub" id="t-diff-sub">&nbsp;</div></div>
@@ -294,7 +326,7 @@ footer a:hover { color: var(--secondary); }
     </section>
 
     <div class="row-2">
-      <section class="glass card rise" style="animation-delay:.16s" aria-label="Pool hashrate chart">
+      <section class="glass card reveal" style="--d:.06s" aria-label="Pool hashrate chart">
         <div class="head">
           <h2>Hashrate</h2>
           <div class="segmented" role="tablist" aria-label="Time range">
@@ -311,7 +343,7 @@ footer a:hover { color: var(--secondary); }
         <div class="chart" id="chart"><svg id="chart-svg" role="img" aria-label="Pool hashrate over time"></svg><div class="tip" id="tip"></div></div>
       </section>
       <div class="stack">
-        <section class="glass card rise" style="animation-delay:.2s">
+        <section class="glass card reveal" style="--d:.12s">
           <div class="head"><h2>Network</h2><span class="aside" id="n-updated"></span></div>
           <div class="kv">
             <div><div class="label">Chain height</div><div class="value" id="n-height">—</div></div>
@@ -320,7 +352,7 @@ footer a:hover { color: var(--secondary); }
             <div><div class="label">Pending payouts</div><div class="value" id="n-pending">—</div></div>
           </div>
         </section>
-        <section class="glass card rise" style="animation-delay:.24s">
+        <section class="glass card reveal" style="--d:.18s">
           <div class="head"><h2>Your earnings</h2></div>
           <form class="lookup" id="lookup">
             <input class="field" id="addr" placeholder="sat1… address" autocomplete="off" spellcheck="false" aria-label="Your sat1 address">
@@ -332,8 +364,8 @@ footer a:hover { color: var(--secondary); }
     </div>
 
     <section id="miners">
-      <h2 class="section-title">Miners<small id="miners-sub">Everyone mining on Saturn Pool</small></h2>
-      <div class="glass card">
+      <h2 class="section-title reveal">Miners<small id="miners-sub">Everyone mining on Saturn Pool</small></h2>
+      <div class="glass card reveal" style="--d:.08s">
         <div class="table-wrap">
           <table>
             <thead><tr><th>Worker</th><th>Status</th><th class="n">Hashrate</th><th class="n">Shares found</th><th class="n">Difficulty</th><th class="n">Work this round</th><th class="n">Blocks</th><th class="n">Pending</th><th class="n">Last share</th></tr></thead>
@@ -345,13 +377,13 @@ footer a:hover { color: var(--secondary); }
     </section>
 
     <section id="blocks">
-      <h2 class="section-title">Blocks<small>Rewards unlock after 100 confirmations, then go out to miners</small></h2>
+      <h2 class="section-title reveal">Blocks<small>Rewards unlock after 100 confirmations, then go out to miners</small></h2>
       <div class="row-2">
-        <div class="glass card">
+        <div class="glass card reveal" style="--d:.08s">
           <div class="head"><h2>Found by the pool</h2><span class="aside" id="blocks-aside"></span></div>
           <div id="blocks-list"></div>
         </div>
-        <div class="glass card">
+        <div class="glass card reveal" style="--d:.08s">
           <div class="head"><h2>Pending payouts</h2><span class="aside">SAT</span></div>
           <div id="payouts"></div>
           <p class="note">Each block's reward is split by the work every miner did since the previous block. Payouts go to the sat1 address you mine with.</p>
@@ -360,8 +392,8 @@ footer a:hover { color: var(--secondary); }
     </section>
 
     <section id="start">
-      <h2 class="section-title">Start mining<small>Works with any SHA-256 miner that speaks Stratum v1</small></h2>
-      <div class="glass connect">
+      <h2 class="section-title reveal">Start mining<small>Works with any SHA-256 miner that speaks Stratum v1</small></h2>
+      <div class="glass connect reveal" style="--d:.06s">
         <div class="rows">
           <div class="row"><span class="k">Pool URL</span><span class="v" id="c-url">stratum+tcp://pool.saturn.boats:3333</span><button class="copy" data-copy="c-url">Copy</button></div>
           <div class="row"><span class="k">Username</span><span class="v">your sat1… address<span class="dim">.workername</span></span><button class="copy" data-copy-text="sat1YOURADDRESS.worker">Copy</button></div>
@@ -369,7 +401,7 @@ footer a:hover { color: var(--secondary); }
         </div>
       </div>
       <div class="ways">
-        <div class="glass way">
+        <div class="glass way reveal" style="--d:0.14s">
           <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 9h6v6H9zM9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg></span>
           <h3>Bitaxe</h3>
           <p>The easiest way to mine real blocks at home.</p>
@@ -379,7 +411,7 @@ footer a:hover { color: var(--secondary); }
             <li><span>User <code>sat1…address.bitaxe</code>, password <code>x</code>. Save and restart.</span></li>
           </ol>
         </div>
-        <div class="glass way">
+        <div class="glass way reveal" style="--d:0.22s">
           <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
           <h3>Saturn Miner</h3>
           <p>The desktop app for macOS, Windows and Linux. Mines with your CPU, shows your earnings and sets up a Bitaxe for you.</p>
@@ -389,7 +421,7 @@ footer a:hover { color: var(--secondary); }
           </ol>
           <a class="mac-button primary" href="https://github.com/saturn-cash/saturn-core/releases" target="_blank" rel="noopener">Download</a>
         </div>
-        <div class="glass way">
+        <div class="glass way reveal" style="--d:0.30s">
           <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16v10H4zM8 7V4h8v3M8 11h.01M12 11h.01M16 11h.01"/></svg></span>
           <h3>Other ASICs</h3>
           <p>Antminer, Whatsminer, NerdMiner, cgminer: any SHA-256 hardware.</p>
@@ -493,6 +525,7 @@ footer a:hover { color: var(--secondary); }
     try {
       last = await api('/stats');
       render(last);
+      endIntro();
     } catch (_) {
       $('st-dot').className = 'dot off';
       $('st-text').textContent = 'Offline';
@@ -546,6 +579,8 @@ footer a:hover { color: var(--secondary); }
       : '<div class="empty">Nothing pending yet.</div>';
   }
 
+  const seenRows = new Set();
+  const seenBlocks = new Set();
   const initials = (name) => ((name || 'w').replace(/[^a-z0-9]/gi, '').slice(0, 2) || 'W').toUpperCase();
 
   function renderMiners(s, online) {
@@ -557,11 +592,15 @@ footer a:hover { color: var(--secondary); }
     const rows = [...known].map((w) => ({ worker: w, m: live.get(w), all: workers[w] || {}, rd: round[w] || {} }));
     rows.sort((a, b) => (!!b.m - !!a.m) || ((b.m?.hashrate || 0) - (a.m?.hashrate || 0)) || ((b.all.shares || 0) - (a.all.shares || 0)));
     const shownPending = new Set(); // pending is per address: show it on that address's first worker only
+    let fresh = 0;
     $('miners-body').innerHTML = rows.map(({ worker, m, all, rd }) => {
+      const isNew = !seenRows.has(worker);
+      seenRows.add(worker);
+      const anim = isNew ? ` class="row-in" style="--d:${(fresh++ * 0.06).toFixed(2)}s"` : '';
       const [addr, name] = String(worker).split('.');
       const lastShare = all.lastShare || rd.lastShare;
       const found = Math.max(all.shares || 0, m ? m.accepted : 0);
-      return `<tr>
+      return `<tr${anim}>
         <td><div class="worker"><span class="avatar hex ${m ? 'spectrum-fill' : 'off'}">${esc(initials(name))}</span><span class="who"><b>${esc(name || 'default')}</b><span title="${esc(addr)}">${esc(short(addr))}</span></span></div></td>
         <td data-label="Status"><span class="status"><i class="dot ${m ? 'on' : ''}"></i>${m ? 'Online' : '<span class="dim">Offline</span>'}</span></td>
         <td class="n" data-label="Hashrate">${m ? (m.hashrate ? rate(m.hashrate) : '<span class="dim">measuring…</span>') : '<span class="dim">—</span>'}</td>
@@ -581,12 +620,14 @@ footer a:hover { color: var(--secondary); }
     const tip = s.height ? s.height - 1 : null; // the template is for the next block
     $('blocks-aside').textContent = blocks.length ? `${blocks.length} total` : '';
     $('blocks-list').innerHTML = blocks.length
-      ? blocks.slice(0, 10).map((b) => {
+      ? blocks.slice(0, 10).map((b, bi) => {
+          const isNew = !seenBlocks.has(b.hash);
+          seenBlocks.add(b.hash);
           const conf = tip != null ? Math.max(0, tip - b.height + 1) : 0;
           const mature = conf >= 100;
           const finder = String(b.miner).split('.')[1] || short(String(b.miner));
-          return `<div class="block">
-            <span class="hexi hex spectrum-fill"></span>
+          return `<div class="block${isNew ? ' row-in' : ''}" style="--d:${(bi * 0.05).toFixed(2)}s">
+            <span class="hexi hex spectrum-fill${isNew ? ' pop' : ''}" style="--d:${(bi * 0.05 + 0.1).toFixed(2)}s"></span>
             <div class="meta" style="min-width:0"><div><b>Block ${int(b.height)}</b> <span class="dim">· ${esc(finder)} · ${ago(b.time)}</span></div><div class="hash" title="${esc(b.hash)}">${esc(b.hash)}</div></div>
             <div class="right"><div style="font-weight:600">${sat(b.reward)} SAT</div><div class="bar" title="${conf} of 100 confirmations"><i class="${mature ? 'done' : ''}" style="width:${Math.min(100, conf)}%"></i></div><div class="sub">${mature ? 'Mature' : `${conf}/100 confirmations`}</div></div>
           </div>`;
@@ -603,11 +644,13 @@ footer a:hover { color: var(--secondary); }
   }
   document.querySelectorAll('[data-range]').forEach((b) => b.addEventListener('click', () => {
     range = +b.dataset.range;
+    animateChart = true;
     document.querySelectorAll('[data-range]').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
     drawChart();
   }));
 
   let chartPts = [];
+  let animateChart = true; // the line draws itself in once when the chart first appears
   function niceMax(v) {
     if (v <= 0) return 1;
     const p = 10 ** Math.floor(Math.log10(v));
@@ -647,8 +690,8 @@ footer a:hover { color: var(--secondary); }
       for (const seg of segs) {
         if (seg.length < 2) continue;
         const line = seg.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join('');
-        out += `<path d="${line}L${seg[seg.length - 1][0].toFixed(1)},${padT + ih}L${seg[0][0].toFixed(1)},${padT + ih}Z" fill="url(#area)"/>`;
-        out += `<path d="${line}" fill="none" stroke="#f5b971" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+        out += `<path class="area${animateChart ? ' draw' : ''}" d="${line}L${seg[seg.length - 1][0].toFixed(1)},${padT + ih}L${seg[0][0].toFixed(1)},${padT + ih}Z" fill="url(#area)"/>`;
+        out += `<path class="line${animateChart ? ' draw' : ''}" d="${line}" fill="none" stroke="#f5b971" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
       }
       const lp = chartPts[chartPts.length - 1];
       out += `<circle cx="${lp[0]}" cy="${lp[1]}" r="4" fill="#f5b971" stroke="#1c1c1e" stroke-width="2"/>`;
@@ -657,6 +700,10 @@ footer a:hover { color: var(--secondary); }
     }
     out += `<line id="cross" x1="0" x2="0" y1="${padT}" y2="${padT + ih}" stroke="rgb(255 255 255 / 0.3)" stroke-width="1" opacity="0"/><circle id="cross-dot" r="4" fill="#f5b971" stroke="#1c1c1e" stroke-width="2" opacity="0"/>`;
     svg.innerHTML = out;
+    if (animateChart && chartPts.length > 1) {
+      svg.querySelectorAll('.line').forEach((l) => l.style.setProperty('--len', String(Math.ceil(l.getTotalLength()))));
+      animateChart = false;
+    }
   }
   (() => {
     const wrap = $('chart'), tip = $('tip');
@@ -712,9 +759,26 @@ footer a:hover { color: var(--secondary); }
     setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('done'); }, 1400);
   }));
   const navLinks = [...document.querySelectorAll('[data-nav]')];
+  const thumb = document.querySelector('.segmented .thumb');
+  function moveThumb() {
+    const on = navLinks.find((a) => a.getAttribute('aria-current') === 'true') || navLinks[0];
+    if (!thumb || !on || !on.offsetWidth) return;
+    thumb.style.width = on.offsetWidth + 'px';
+    thumb.style.transform = `translateX(${on.offsetLeft}px)`;
+  }
   const spy = new IntersectionObserver((entries) => {
     for (const e of entries) if (e.isIntersecting) navLinks.forEach((a) => a.setAttribute('aria-current', String(a.dataset.nav === e.target.id)));
+    moveThumb();
   }, { rootMargin: '-45% 0px -50% 0px' });
+  navLinks.forEach((a) => a.addEventListener('click', () => { navLinks.forEach((x) => x.setAttribute('aria-current', String(x === a))); moveThumb(); }));
+  addEventListener('resize', moveThumb);
+
+  const reveal = new IntersectionObserver((entries) => {
+    for (const e of entries) if (e.isIntersecting) { e.target.classList.add('in'); reveal.unobserve(e.target); }
+  }, { threshold: 0.08, rootMargin: '0px 0px -6% 0px' });
+  document.querySelectorAll('.reveal').forEach((el) => reveal.observe(el));
+
+  function endIntro() { moveThumb(); }
   ['top', 'miners', 'blocks', 'start'].forEach((id) => spy.observe($(id)));
 
   /* ---------------- starfield ---------------- */
@@ -832,7 +896,12 @@ footer a:hover { color: var(--secondary); }
   }
 
   /* ---------------- loop ---------------- */
-  function frame(t) { drawSky(t); if (!reduce) requestAnimationFrame(frame); }
+  const planet = $('planet');
+  function frame(t) {
+    drawSky(t);
+    if (scrollY < innerHeight * 1.5) planet.style.setProperty('--py', (scrollY * 0.28).toFixed(1) + 'px'); // planet drifts slower than the page
+    if (!reduce) requestAnimationFrame(frame);
+  }
   let rt, lastW = 0;
   function resize() {
     sizeSky();

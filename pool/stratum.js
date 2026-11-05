@@ -562,6 +562,42 @@ refreshNetwork();
 
 const WEB_ROOT = path.join(__dirname, "public");
 
+// scantxoutset runs one scan at a time, so requests queue behind each other; results are cached
+// for a few seconds per address set
+let scanChain = Promise.resolve();
+const scanCache = new Map();
+function scanUtxos(addrs) {
+  const key = [...addrs].sort().join(",");
+  const hit = scanCache.get(key);
+  if (hit && Date.now() - hit.at < 8000) return Promise.resolve(hit.value);
+  const run = scanChain.then(async () => {
+    const r = await rpc("scantxoutset", ["start", addrs.map((a) => `addr(${a})`)]);
+    const tip = r.height;
+    const utxos = (r.unspents || []).map((u) => {
+      const confirmations = tip - u.height + 1;
+      return {
+        txid: u.txid,
+        vout: u.vout,
+        amount: u.amount,
+        sats: Math.round(u.amount * 1e8),
+        scriptPubKey: u.scriptPubKey,
+        address: (u.desc.match(/addr\(([^)]+)\)/) || [])[1] || null,
+        height: u.height,
+        confirmations,
+        coinbase: !!u.coinbase,
+        // newly mined coins can't be spent for 100 blocks
+        spendable: !u.coinbase || confirmations >= 100,
+      };
+    });
+    const value = { height: tip, utxos };
+    scanCache.set(key, { at: Date.now(), value });
+    if (scanCache.size > 500) scanCache.delete(scanCache.keys().next().value);
+    return value;
+  });
+  scanChain = run.catch(() => {});
+  return run;
+}
+
 function handleHttp(req, res) {
   // the pool website: GET / serves public/index.html when it exists
   const urlPath = req.url.split("?")[0];
@@ -603,6 +639,46 @@ function handleHttp(req, res) {
         2,
       ),
     );
+    return;
+  }
+  // Light-wallet API for Saturn Miner: unspent coins for a set of addresses, and broadcasting a
+  // signed transaction. Read-only plus relay, like a block explorer.
+  if (urlPath === "/utxos" && req.method === "GET") {
+    const addrs = (new URL(req.url, "http://x").searchParams.get("addrs") || "")
+      .split(",")
+      .map((a) => a.trim().toLowerCase())
+      .filter((a) => /^(sat1|bcrt1)[02-9ac-hj-np-z]{8,87}$/.test(a)) // bcrt1: regtest, for testing
+      .slice(0, 100);
+    if (!addrs.length) {
+      res.statusCode = 400;
+      return res.end(JSON.stringify({ error: "pass ?addrs=sat1…,sat1…" }));
+    }
+    scanUtxos(addrs)
+      .then((r) => res.end(JSON.stringify(r)))
+      .catch((e) => {
+        res.statusCode = 502;
+        res.end(JSON.stringify({ error: e.message }));
+      });
+    return;
+  }
+  if (urlPath === "/broadcast" && req.method === "POST") {
+    let body = "";
+    req.on("data", (d) => {
+      body += d;
+      if (body.length > 400_000) req.destroy();
+    });
+    req.on("end", async () => {
+      try {
+        const { hex } = JSON.parse(body || "{}");
+        if (!/^[0-9a-f]+$/i.test(hex || "")) throw new Error("send {\"hex\": \"<signed transaction>\"}");
+        const txid = await rpc("sendrawtransaction", [hex]);
+        console.log("broadcast", txid);
+        res.end(JSON.stringify({ txid }));
+      } catch (e) {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
     return;
   }
   if (urlPath === "/history") {

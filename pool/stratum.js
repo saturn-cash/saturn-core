@@ -19,6 +19,8 @@ const crypto = require("crypto");
 const config = JSON.parse(fs.readFileSync("./config.json"));
 
 // Everything a block pays goes to the pool wallet; payout.js forwards miners' shares from there.
+// address prefix miners log in with ("bcrt" lets the pool run against a regtest chain for testing)
+const ADDRESS_PREFIX = config.addressPrefix || "sat";
 const payoutScript = config.payoutScript || "00148b0ba8d3e679a540d3869aeb9dd7c7ca369234cc";
 const POOL_TAG = Buffer.from(config.poolTag || "/Saturn Pool/");
 const EXTRANONCE2_SIZE = 4;
@@ -64,29 +66,49 @@ function recordBlock(worker, height, reward, hash) {
   fs.writeFileSync(file, JSON.stringify(blocks.slice(0, 25), null, 2));
 }
 
-// split the block reward over everyone's work since the last block, by share difficulty
-function creditPayouts(rewardSat) {
+// Split a found block's reward over everyone's work since the previous block, by share difficulty,
+// and record it as a "round". payout.js pays a round once its reward has unlocked (101
+// confirmations) and the block is still in the chain. `pending` (shown on the site and in the app)
+// is everything a miner is owed: unlocked-but-unpaid plus still-maturing.
+function creditPayouts(rewardSat, height, hash) {
   const statsFile = "./data/stats.json";
   const payoutsFile = "./data/payouts.json";
   const stats = readJson(statsFile, { totalShares: 0, miners: {} });
-  const payouts = readJson(payoutsFile, { pending: {}, paid: [] });
-  payouts.pending = payouts.pending || {};
+  const payouts = readJson(payoutsFile, {});
   const totalShares = stats.totalShares || 0;
   if (!totalShares || !stats.miners) {
     console.log("payout skipped: no shares recorded");
     return;
   }
+  // older pools kept a running "pending" total with no block behind each entry: set it aside
+  if (!payouts.migrated) {
+    if (payouts.pending && Object.keys(payouts.pending).length && !(payouts.rounds || []).length) payouts.legacyPending = payouts.pending;
+    payouts.migrated = new Date().toISOString();
+  }
+  const credits = {};
   for (const worker of Object.keys(stats.miners)) {
     const shares = stats.miners[worker].shares || 0;
     if (!shares) continue;
-    const reward = (shares / totalShares) * rewardSat;
-    const payoutAddress = worker.split(".")[0];
-    payouts.pending[payoutAddress] = (payouts.pending[payoutAddress] || 0) + reward;
+    const address = worker.split(".")[0];
+    credits[address] = (credits[address] || 0) + (shares / totalShares) * rewardSat;
   }
-  payouts.lastCredit = { rewardSat, totalShares, time: new Date().toISOString() };
-  fs.writeFileSync(payoutsFile, JSON.stringify(payouts, null, 2));
+  for (const a of Object.keys(credits)) credits[a] = Math.floor(credits[a] * 1e8) / 1e8; // never promise more than the block paid
+  payouts.rounds = payouts.rounds || [];
+  payouts.rounds.push({ height, hash, reward: rewardSat, credits, status: "immature", time: new Date().toISOString() });
+  payouts.lastCredit = { rewardSat, totalShares, height, time: new Date().toISOString() };
+  fs.writeFileSync(payoutsFile, JSON.stringify(withPending(payouts), null, 2));
   fs.writeFileSync(statsFile, JSON.stringify({ totalShares: 0, miners: {} }, null, 2));
   console.log("payouts credited:", payouts.lastCredit);
+}
+
+// pending = owed (unlocked, not yet paid) + credits of rounds still maturing
+function withPending(payouts) {
+  const pending = {};
+  for (const [a, v] of Object.entries(payouts.owed || {})) pending[a] = (pending[a] || 0) + v;
+  for (const r of payouts.rounds || []) if (r.status === "immature") for (const [a, v] of Object.entries(r.credits)) pending[a] = (pending[a] || 0) + v;
+  for (const a of Object.keys(pending)) pending[a] = Math.round(pending[a] * 1e8) / 1e8;
+  payouts.pending = pending;
+  return payouts;
 }
 
 // shares are weighted by their difficulty, so a Bitaxe at diff 4096 earns 4096x a diff-1 share
@@ -273,9 +295,9 @@ async function refreshTemplate(force = false) {
 /* RPC                                                                 */
 /* ------------------------------------------------------------------ */
 
-async function rpc(method, params = []) {
+async function rpc(method, params = [], wallet = null) {
   const auth = Buffer.from(`${config.rpc.user}:${config.rpc.password}`).toString("base64");
-  const res = await fetch(`http://${config.rpc.host}:${config.rpc.port}`, {
+  const res = await fetch(`http://${config.rpc.host}:${config.rpc.port}${wallet ? `/wallet/${encodeURIComponent(wallet)}` : ""}`, {
     method: "POST",
     headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "1.0", id: "saturn-pool", method, params }),
@@ -355,15 +377,22 @@ async function handleSubmit(c, msg) {
   const ntime = parseInt(ntimeHex, 16);
   if (ntime < t.mintime || ntime > Math.floor(Date.now() / 1000) + 7200) return reject(20, "ntime out of range");
 
-  let version = t.version;
+  // BIP310 version rolling. Miners disagree on what they submit when the template already has bits
+  // inside the mask: BIP310/cgminer send the rolled bits themselves, ESP-Miner (Bitaxe) sends the
+  // bits it changed. Both give the same version when no template bit is in the mask (the normal
+  // case); otherwise the share is checked against both readings.
+  let versions = [t.version];
   if (versionBitsHex !== undefined) {
     if (!/^[0-9a-f]{1,8}$/i.test(versionBitsHex)) return reject(20, "bad version bits");
     const bits = parseInt(versionBitsHex, 16);
     if ((bits & ~c.versionMask) !== 0) return reject(20, "version bits outside mask");
-    version = (t.version ^ bits) >>> 0;
+    const xor = (t.version ^ bits) >>> 0;
+    const or = ((t.version & ~c.versionMask) | bits) >>> 0;
+    versions = xor === or ? [xor] : [xor, or];
   }
+  let version = versions[0];
 
-  const key = `${jobId}:${c.extranonce1}:${en2Hex}:${ntimeHex}:${nonceHex}:${version}`.toLowerCase();
+  const key = `${jobId}:${c.extranonce1}:${en2Hex}:${ntimeHex}:${nonceHex}:${versionBitsHex || ""}`.toLowerCase();
   if (c.seen.has(key)) return reject(22, "duplicate share");
   c.seen.add(key);
   if (c.seen.size > 5000) c.seen = new Set([...c.seen].slice(-2500));
@@ -371,19 +400,20 @@ async function handleSubmit(c, msg) {
   const coinbase = Buffer.concat([job.coinb1, Buffer.from(c.extranonce1, "hex"), Buffer.from(en2Hex, "hex"), job.coinb2]);
   let root = sha256d(coinbase);
   for (const b of job.branches) root = sha256d(Buffer.concat([root, b]));
-  const header = Buffer.concat([
-    u32le(version),
-    reverse(Buffer.from(t.previousblockhash, "hex")),
-    root,
-    u32le(ntime),
-    reverse(Buffer.from(t.bits, "hex")),
-    u32le(parseInt(nonceHex, 16)),
-  ]);
-  const hash = sha256d(header);
-  const value = hashToBigInt(hash);
-
+  const makeHeader = (v) =>
+    Buffer.concat([u32le(v), reverse(Buffer.from(t.previousblockhash, "hex")), root, u32le(ntime), reverse(Buffer.from(t.bits, "hex")), u32le(parseInt(nonceHex, 16))]);
   const diff = c.jobDiff.get(job.id) ?? c.difficulty;
-  if (value > targetFromDifficulty(diff)) return reject(23, "low difficulty share");
+  const shareTarget = targetFromDifficulty(diff);
+  let header = makeHeader(version);
+  let hash = sha256d(header);
+  let value = hashToBigInt(hash);
+  if (value > shareTarget && versions.length > 1) {
+    version = versions[1];
+    header = makeHeader(version);
+    hash = sha256d(header);
+    value = hashToBigInt(hash);
+  }
+  if (value > shareTarget) return reject(23, "low difficulty share");
 
   c.accepted++;
   c.windowShares++;
@@ -406,7 +436,7 @@ async function handleSubmit(c, msg) {
         refreshNetwork();
         const rewardSat = t.coinbasevalue / 100000000;
         recordBlock(c.worker, t.height, rewardSat, blockHash);
-        creditPayouts(rewardSat);
+        creditPayouts(rewardSat, t.height, blockHash);
         await refreshTemplate(true);
       } else {
         console.error("submitblock rejected block", t.height, ":", result);
@@ -500,7 +530,7 @@ const server = net.createServer((socket) => {
             const address = (dot < 0 ? raw : raw.slice(0, dot)).toLowerCase();
             const workerName = dot < 0 ? "" : raw.slice(dot + 1).trim();
             const worker = workerName ? `${address}.${workerName}` : address;
-            if (!/^sat1[02-9ac-hj-np-z]{8,87}$/.test(address)) {
+            if (!new RegExp(`^${ADDRESS_PREFIX}1[02-9ac-hj-np-z]{8,87}$`).test(address)) {
               console.log(`login refused from ${socket.remoteAddress}: username ${JSON.stringify(raw)} is not a sat1 address`);
               send(socket, { id: msg.id, result: false, error: [24, "username must be your sat1… address (optionally .workername)", null] });
               break;
@@ -634,7 +664,8 @@ function handleHttp(req, res) {
           // difficulty of the block being mined now (getmininginfo reports the tip's)
           network: { ...network, nextDifficulty: template ? Number(DIFF1_TARGET) / Number(targetFromBits(template.bits)) : null },
           reward: template ? template.coinbasevalue / 1e8 : null,
-          pending: payouts.pending || {},
+          pending: withPending(payouts).pending || {},
+          rounds: (payouts.rounds || []).slice(-25).map((r) => ({ height: r.height, status: r.status, reward: r.reward })),
           paid: (payouts.paid || []).slice(-10),
           stratum: `stratum+tcp://${config.poolHost || "pool.saturn.boats"}:${config.stratumPort}`,
         },
@@ -726,6 +757,24 @@ setInterval(() => {
   history = history.filter(([t]) => t > Date.now() - 86_400_000);
 }, 60_000);
 setInterval(() => fs.writeFileSync(HISTORY_FILE, JSON.stringify(history)), 5 * 60_000);
+
+// The address blocks pay must belong to the wallet payout.js pays from, or rewards are lost.
+async function checkPayoutAddress() {
+  const wallet = config.payoutWallet || "vps-wallet";
+  if (!config.payoutAddress) {
+    console.error(`WARNING: config.payoutAddress is not set. Set it (and payoutScript) to an address from the "${wallet}" wallet, or block rewards may go to an address nobody can spend.`);
+    return;
+  }
+  try {
+    const info = await rpc("getaddressinfo", [config.payoutAddress], wallet);
+    if (!info.ismine) console.error(`WARNING: the pool pays ${config.payoutAddress}, which is NOT in the "${wallet}" wallet. Block rewards there cannot be paid out.`);
+    else if (info.scriptPubKey !== payoutScript) console.error(`WARNING: config.payoutScript doesn't match config.payoutAddress (${info.scriptPubKey}).`);
+    else console.log(`block rewards go to ${config.payoutAddress} in the "${wallet}" wallet`);
+  } catch (e) {
+    console.error(`WARNING: couldn't check the payout address against the "${wallet}" wallet: ${e.message}`);
+  }
+}
+checkPayoutAddress();
 
 // first run with the all-time worker list: seed it from the current round and the blocks found so far
 if (!fs.existsSync("./data/workers.json")) {

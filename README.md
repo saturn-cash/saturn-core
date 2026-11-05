@@ -21,7 +21,6 @@ Saturn Core is an independent project built upon the open-source foundations est
 ### Maintainers
 
 Saturn Core Developers
-Project Lead: Tremoto
 
 ### Notes
 

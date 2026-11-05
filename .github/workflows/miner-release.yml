@@ -13,8 +13,8 @@ on:
 
 env:
   MINER_REPO: saturn-cash/saturn-miner-v0.3.0
-  MINER_REF: 6ddb2dc85844199edad0c5d951400e563ca75617 # Saturn 0.6.0
-  MINER_TAG: miner-v0.6.0
+  MINER_REF: b624ea0d1b61f8c7063153913598916e4c7cecdc # Saturn 0.6.1
+  MINER_TAG: miner-v0.6.1
 
 jobs:
   build:
@@ -86,7 +86,10 @@ jobs:
             - **Mac (Intel)**: the `x64.dmg`
             - **Linux**: the `.AppImage` (any distro), `.deb` (Ubuntu/Debian) or `.rpm` (Fedora)
 
-            **What's new in 0.6.0**
+            **What's new in 0.6.1**
+            - A new, minimal launch screen.
+
+            **New in 0.6.0**
             - **Built-in wallet.** Create a wallet or restore one from a 12-word recovery phrase, see your balance and mining rewards as they mature, receive with a QR code, and send SAT. Transactions are signed on your computer; the recovery phrase never leaves it. No Saturn Core node needed.
             - New wallets automatically receive your mining payouts.
             - Export your wallet to Saturn Core whenever you want to run a full node.

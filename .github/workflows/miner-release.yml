@@ -13,8 +13,8 @@ on:
 
 env:
   MINER_REPO: saturn-cash/saturn-miner-v0.3.0
-  MINER_REF: f6ebf47a6aac5d68ff665482382c09b62f471f4a # Saturn 0.6.2
-  MINER_TAG: miner-v0.6.2
+  MINER_REF: fef2148f3feacdcb691092b564be90e8c5d048bc # Saturn 0.7.0
+  MINER_TAG: miner-v0.7.0
 
 jobs:
   build:
@@ -24,9 +24,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest # Apple silicon (M1 and newer)
+          # both Mac builds run on an Intel runner: Apple silicon runners are often short on capacity
+          - platform: macos-15-intel # Apple silicon (M1 and newer)
             args: --target aarch64-apple-darwin
-          - platform: macos-latest # Intel Macs
+          - platform: macos-15-intel # Intel Macs
             args: --target x86_64-apple-darwin
           - platform: ubuntu-22.04 # .deb, .rpm and .AppImage
             args: ''
@@ -59,7 +60,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos-15-intel' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -78,7 +79,7 @@ jobs:
           releaseName: 'Saturn v__VERSION__'
           releaseCommitish: ${{ github.sha }}
           releaseBody: |
-            Saturn: the desktop miner and wallet for the Saturn (SAT) network.
+            Saturn: the desktop miner, wallet and full node for the Saturn (SAT) network.
 
             **Download the installer for your computer:**
             - **Windows**: the `.msi` or `-setup.exe`
@@ -86,7 +87,11 @@ jobs:
             - **Mac (Intel)**: the `x64.dmg`
             - **Linux**: the `.AppImage` (any distro), `.deb` (Ubuntu/Debian) or `.rpm` (Fedora)
 
-            **What's new in 0.6.2**
+            **What's new in 0.7.0**
+            - **Run a full Saturn node.** Turn on "Saturn node on this computer" on the Network screen and the app downloads Saturn Core, checks it, and runs it: your own copy of the chain, real peers and blocks, and one more node keeping the network alive. It starts with Saturn and shuts down cleanly when you quit.
+            - **Solo mining.** Pick Solo on the Mining screen: any block you find pays its whole reward straight to your address instead of being split with the pool.
+
+            **New in 0.6.2**
             - **Multiple wallets.** Keep several, switch between them and rename them. Add one by creating it, restoring a recovery phrase, or importing it from Saturn Core, so the address your miner already pays can be spent here.
             - **Multiple addresses.** Each wallet hands out as many receive addresses as you like, and any of them can be your mining payout address.
             - **Bitaxe scan that finds it.** The scan now searches every network your computer can reach, not just the first adapter Windows reports, and tells you which networks it checked.

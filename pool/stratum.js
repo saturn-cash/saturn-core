@@ -12,6 +12,7 @@
 const net = require("net");
 const http = require("http");
 const fs = require("fs");
+const path = require("path");
 const fetch = require("node-fetch");
 const crypto = require("crypto");
 
@@ -369,6 +370,7 @@ async function handleSubmit(c, msg) {
 
   c.accepted++;
   c.windowShares++;
+  c.recent.push([Date.now(), diff]);
   recordShare(c.worker, diff);
   send(c.socket, { id: msg.id, result: true, error: null });
 
@@ -384,6 +386,7 @@ async function handleSubmit(c, msg) {
       const result = await rpc("submitblock", [block.toString("hex")]);
       if (result === null || result === "duplicate") {
         console.log("REAL BLOCK ACCEPTED!", t.height, blockHash);
+        refreshNetwork();
         const rewardSat = t.coinbasevalue / 100000000;
         recordBlock(c.worker, t.height, rewardSat, blockHash);
         creditPayouts(rewardSat);
@@ -414,6 +417,8 @@ const server = net.createServer((socket) => {
     windowStart: Date.now(),
     windowShares: 0,
     jobDiff: new Map(),
+    recent: [], // [time, difficulty] of accepted shares, for the live hashrate
+    since: Date.now(),
     seen: new Set(),
     buffer: "",
   };
@@ -515,7 +520,43 @@ const server = net.createServer((socket) => {
 /* stats API (unchanged endpoints) + live hashrate per worker          */
 /* ------------------------------------------------------------------ */
 
-const statsServer = http.createServer((req, res) => {
+// hashes per second implied by the shares a miner sent in the last 10 minutes (each diff-1 share
+// stands for 2^32 hashes)
+const HASH_WINDOW_MS = 10 * 60_000;
+function liveHashrate(c) {
+  const now = Date.now();
+  while (c.recent.length && c.recent[0][0] < now - HASH_WINDOW_MS) c.recent.shift();
+  const span = Math.min(HASH_WINDOW_MS, now - c.since) / 1000;
+  if (span < 20) return 0;
+  return (c.recent.reduce((a, [, d]) => a + d, 0) * 2 ** 32) / span;
+}
+
+let network = { hashrate: null, difficulty: null, blocks: null, updated: 0 };
+async function refreshNetwork() {
+  try {
+    const info = await rpc("getmininginfo");
+    network = { hashrate: info.networkhashps ?? null, difficulty: info.difficulty ?? null, blocks: info.blocks ?? null, updated: Date.now() };
+  } catch (e) {
+    console.error("getmininginfo failed:", e.message);
+  }
+}
+setInterval(refreshNetwork, 15_000);
+refreshNetwork();
+
+const WEB_ROOT = path.join(__dirname, "public");
+
+function handleHttp(req, res) {
+  // the pool website: GET / serves public/index.html when it exists
+  const urlPath = req.url.split("?")[0];
+  if (req.method === "GET" && (urlPath === "/" || urlPath === "/index.html" || /^\/[\w.-]+\.(png|svg|ico|webp)$/.test(urlPath))) {
+    const file = path.join(WEB_ROOT, urlPath === "/" ? "index.html" : urlPath.slice(1));
+    if (file.startsWith(WEB_ROOT) && fs.existsSync(file)) {
+      const types = { ".html": "text/html; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".webp": "image/webp" };
+      res.setHeader("Content-Type", types[path.extname(file)] || "application/octet-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      return res.end(fs.readFileSync(file));
+    }
+  }
   res.setHeader("Content-Type", "application/json");
   res.setHeader("Access-Control-Allow-Origin", "*");
   const stats = readJson("./data/stats.json", { totalShares: 0, miners: {} });
@@ -530,8 +571,14 @@ const statsServer = http.createServer((req, res) => {
           totalShares: stats.totalShares || 0,
           miners: stats.miners || {},
           blocks,
-          connected: [...clients].filter((c) => c.authorized).map((c) => ({ worker: c.worker, difficulty: c.difficulty, accepted: c.accepted, rejected: c.rejected })),
+          connected: [...clients].filter((c) => c.authorized).map((c) => ({ worker: c.worker, difficulty: c.difficulty, accepted: c.accepted, rejected: c.rejected, hashrate: liveHashrate(c), since: new Date(c.since).toISOString() })),
+          hashrate: [...clients].filter((c) => c.authorized).reduce((a, c) => a + liveHashrate(c), 0),
           height: template?.height ?? null,
+          network,
+          reward: template ? template.coinbasevalue / 1e8 : null,
+          pending: payouts.pending || {},
+          paid: (payouts.paid || []).slice(-10),
+          stratum: `stratum+tcp://${config.poolHost || "pool.saturn.boats"}:${config.stratumPort}`,
         },
         null,
         2,
@@ -561,7 +608,12 @@ const statsServer = http.createServer((req, res) => {
   }
   res.statusCode = 404;
   res.end(JSON.stringify({ error: "not found" }));
-});
+}
+const statsServer = http.createServer(handleHttp);
+// optional second port for the website (e.g. 80), same pages and API
+if (config.sitePort) {
+  http.createServer(handleHttp).listen(config.sitePort, "0.0.0.0", () => console.log(`Saturn pool website listening on ${config.sitePort}`)).on("error", (e) => console.error(`website port ${config.sitePort}:`, e.message));
+}
 
 setInterval(refreshTemplate, 5000);
 // miners whose difficulty is too high may never submit; ease them down even without shares

@@ -1,0 +1,719 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Saturn Pool</title>
+<meta name="description" content="The Saturn (SAT) mining pool. Point any SHA-256 miner at pool.saturn.boats:3333 with your sat1 address.">
+<meta name="theme-color" content="#000000">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024'%3E%3Cg fill='%23f5b971'%3E%3Ccircle cx='512' cy='512' r='228'/%3E%3Cg transform='rotate(-22 512 512)'%3E%3Cpath fill-rule='evenodd' d='M60,512 a452,128 0 1,0 904,0 a452,128 0 1,0 -904,0 Z M142,512 a370,86 0 1,1 740,0 a370,86 0 1,1 -740,0 Z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Same system as the Saturn Miner app: macOS dark materials, SF Pro type, butterscotch gold
+   primary, storm-blue accent, spectrum hexagon for the one big action. */
+@property --spectrum-angle { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+:root {
+  color-scheme: dark;
+  --void: #000;
+  --label: #fff;
+  --secondary: rgb(235 235 245 / 0.6);
+  --tertiary: rgb(235 235 245 / 0.32);
+  --separator: rgb(255 255 255 / 0.09);
+  --primary: #f5b971;
+  --primary-ink: #1c1206;
+  --accent: #64d2ff;
+  --ok: #30d158;
+  --warn: #ffd60a;
+  --bad: #ff453a;
+  --spectrum: #bc82f3, #f5b9ea, #8d9fff, #ff6778, #ffba71, #c686ff, #bc82f3;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Segoe UI", system-ui, sans-serif;
+  --display: -apple-system, BlinkMacSystemFont, "SF Pro Display", Inter, "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--void); }
+body {
+  color: var(--label);
+  font: 13px/1.38 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "tnum";
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+::selection { background: rgb(245 185 113 / 0.35); }
+a { color: inherit; text-decoration: none; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+:focus-visible { outline: none; box-shadow: 0 0 0 3px rgb(245 185 113 / 0.45); border-radius: 6px; }
+
+#sky { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+.page { position: relative; z-index: 1; }
+
+/* ---------- toolbar ---------- */
+.toolbar {
+  position: sticky; top: 0; z-index: 30;
+  height: 52px;
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 max(20px, env(safe-area-inset-left));
+  background: rgb(22 22 24 / 0.72);
+  backdrop-filter: blur(30px) saturate(180%);
+  box-shadow: 0 0.5px 0 rgb(255 255 255 / 0.08), 0 1px 0 rgb(0 0 0 / 0.5);
+}
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand svg { width: 26px; height: 26px; color: var(--primary); flex: none; }
+.brand b { font: 600 15px/1.1 var(--display); letter-spacing: -0.01em; display: block; }
+.brand small { color: var(--secondary); font-size: 11px; display: block; }
+.toolbar .spacer { flex: 1; }
+.pill {
+  display: inline-flex; align-items: center; height: 26px; border-radius: 7px;
+  background: rgb(255 255 255 / 0.06); box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.1);
+  font-size: 12px; overflow: hidden; white-space: nowrap;
+}
+.pill > span { padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; }
+.pill > span + span { box-shadow: -0.5px 0 0 rgb(255 255 255 / 0.12); color: var(--secondary); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--tertiary); flex: none; }
+.dot.on { background: var(--ok); box-shadow: 0 0 0 3px rgb(48 209 88 / 0.18); }
+.dot.off { background: var(--bad); }
+.mac-button {
+  height: 26px; padding: 0 12px; border-radius: 7px; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; font-weight: 500; white-space: nowrap;
+  background: rgb(255 255 255 / 0.1); box-shadow: inset 0 0.5px 0 rgb(255 255 255 / 0.12), 0 0.5px 1px rgb(0 0 0 / 0.4);
+  transition: background .15s;
+}
+.mac-button:hover { background: rgb(255 255 255 / 0.15); }
+.mac-button.primary { background: var(--primary); color: var(--primary-ink); }
+.mac-button.primary:hover { background: #f8c88c; }
+.mac-button svg { width: 13px; height: 13px; }
+
+/* ---------- layout ---------- */
+main { max-width: 1180px; margin: 0 auto; padding: 0 20px 64px; }
+.hero {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center; gap: 24px; min-height: 380px; padding: 36px 0 28px;
+}
+.eyebrow { font: 500 15px/1.2 var(--display); color: var(--secondary); }
+.big {
+  font: 200 clamp(64px, 10vw, 128px)/0.95 var(--display); letter-spacing: -0.035em;
+  display: flex; align-items: baseline; gap: 10px; margin: 8px 0 14px; font-variant-numeric: tabular-nums;
+}
+.big .unit { font: 400 clamp(20px, 2.4vw, 30px)/1 var(--display); color: var(--secondary); letter-spacing: -0.01em; }
+.status-line { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--secondary); }
+
+/* spectrum reactor */
+.reactor { display: grid; justify-items: center; gap: 12px; }
+.reactor a { position: relative; width: 120px; height: 120px; display: grid; place-items: center; }
+.hex { clip-path: polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0% 50%); }
+.spectrum-fill { background: conic-gradient(from var(--spectrum-angle), var(--spectrum)); animation: spectrum-turn 6s linear infinite; }
+@keyframes spectrum-turn { to { --spectrum-angle: 360deg; } }
+.reactor .glow { position: absolute; inset: -26px; filter: blur(26px); opacity: .55; border-radius: 50%; animation: spectrum-turn 6s linear infinite, breathe 4s ease-in-out infinite; }
+@keyframes breathe { 0%,100% { opacity: .4; transform: scale(.94); } 50% { opacity: .7; transform: scale(1.05); } }
+.reactor .rim { position: absolute; inset: 0; }
+.reactor .core { position: absolute; inset: 4px; background: radial-gradient(circle at 50% 35%, #2a2a2e, #141416 70%); display: grid; place-items: center; transition: transform .25s cubic-bezier(.2,.9,.3,1.2); }
+.reactor a:hover .core { transform: scale(.97); }
+.reactor a:active .core { transform: scale(.92); }
+.reactor .core svg { width: 34px; height: 34px; color: #fff; }
+.reactor p { margin: 0; font: 600 15px/1 var(--display); }
+.reactor small { color: var(--secondary); font-size: 12px; }
+
+#planet { width: 100%; max-width: 460px; aspect-ratio: 1.25; justify-self: end; display: block; }
+
+/* glass groups */
+.glass {
+  position: relative; border-radius: 12px;
+  background: rgb(28 28 30 / 0.62);
+  backdrop-filter: blur(30px) saturate(160%);
+  box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.1), inset 0 0.5px 0 rgb(255 255 255 / 0.08), 0 1px 2px rgb(0 0 0 / 0.25), 0 8px 24px -12px rgb(0 0 0 / 0.5);
+}
+.strip { display: grid; grid-template-columns: repeat(4, 1fr); }
+.strip > div { padding: 18px 20px 16px; }
+.strip > div + div { box-shadow: -0.5px 0 0 var(--separator); }
+.label { font-size: 12px; color: var(--secondary); }
+.value { font: 500 26px/1.15 var(--display); letter-spacing: -0.02em; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.sub { font-size: 11.5px; color: var(--tertiary); margin-top: 2px; }
+
+.grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 16px; margin-top: 16px; }
+.card { padding: 18px 20px; }
+.card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.card-head h2 { margin: 0; font: 600 15px/1.2 var(--display); letter-spacing: -0.01em; }
+.card-head .aside { font-size: 12px; color: var(--secondary); }
+.link { color: var(--primary); font-size: 12.5px; display: inline-flex; align-items: center; gap: 3px; }
+.link:hover { text-decoration: underline; }
+
+/* settings-style rows */
+.rows { border-radius: 9px; background: rgb(255 255 255 / 0.04); box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.07); }
+.row { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 12px; }
+.row + .row { box-shadow: 0 -0.5px 0 var(--separator); }
+.row .k { width: 92px; flex: none; color: var(--secondary); }
+.row .v { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: all; }
+.copy { height: 24px; padding: 0 10px; border-radius: 6px; font-size: 12px; background: rgb(255 255 255 / 0.08); box-shadow: inset 0 0.5px 0 rgb(255 255 255 / 0.1); flex: none; transition: background .15s, color .15s; }
+.copy:hover { background: rgb(255 255 255 / 0.14); }
+.copy.done { color: var(--ok); }
+
+.segmented { display: inline-flex; padding: 2px; gap: 2px; border-radius: 7px; background: rgb(255 255 255 / 0.07); box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.06); }
+.segmented button { height: 22px; padding: 0 12px; border-radius: 5px; font-size: 12px; font-weight: 500; color: rgb(235 235 245 / 0.75); }
+.segmented button[aria-selected="true"] { color: #fff; background: rgb(255 255 255 / 0.2); box-shadow: 0 0.5px 1px rgb(0 0 0 / 0.35), inset 0 0.5px 0 rgb(255 255 255 / 0.12); }
+.steps { margin: 14px 0 0; padding: 0; list-style: none; counter-reset: s; display: grid; gap: 8px; }
+.steps li { counter-increment: s; display: flex; gap: 10px; color: rgb(235 235 245 / 0.82); font-size: 13px; }
+.steps li::before { content: counter(s); flex: none; width: 18px; height: 18px; border-radius: 50%; background: rgb(245 185 113 / 0.16); color: var(--primary); font: 600 11px/18px var(--display); text-align: center; margin-top: 1px; }
+.steps code { font-family: var(--mono); font-size: 12px; background: rgb(255 255 255 / 0.07); padding: 1px 5px; border-radius: 4px; color: #fff; }
+
+.kv { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 20px; }
+.kv .value { font-size: 22px; }
+.accent { color: var(--accent); }
+.gold { color: var(--primary); }
+
+/* tables / lists */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; font-weight: 500; font-size: 11.5px; color: var(--secondary); padding: 0 10px 8px; }
+td { padding: 9px 10px; box-shadow: 0 -0.5px 0 var(--separator); white-space: nowrap; font-variant-numeric: tabular-nums; }
+th.n, td.n { text-align: right; }
+.worker { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.worker .addr { font-family: var(--mono); font-size: 12px; color: var(--secondary); overflow: hidden; text-overflow: ellipsis; }
+.worker b { font-weight: 500; }
+.empty { color: var(--tertiary); padding: 14px 2px 4px; font-size: 13px; }
+.table-wrap { overflow-x: auto; margin: 0 -10px; }
+.block { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+.block + .block { box-shadow: 0 -0.5px 0 var(--separator); }
+.block .hexi { width: 28px; height: 28px; flex: none; }
+.block .meta { flex: 1; min-width: 0; }
+.block .meta b { font-weight: 600; }
+.block .meta div:last-child { font-family: var(--mono); font-size: 11.5px; color: var(--tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.block .when { color: var(--secondary); font-size: 12px; white-space: nowrap; }
+
+.lookup { display: flex; gap: 8px; }
+.field {
+  flex: 1; min-width: 0; height: 30px; padding: 0 10px; border-radius: 7px; border: 0; color: #fff;
+  font: 12.5px var(--mono); background: rgb(0 0 0 / 0.25); box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.14), inset 0 1px 2px rgb(0 0 0 / 0.3);
+}
+.field::placeholder { color: var(--tertiary); }
+.field:focus { outline: none; box-shadow: 0 0 0 3px rgb(245 185 113 / 0.45), inset 0 0 0 0.5px rgb(245 185 113 / 0.6); }
+.result { margin-top: 14px; }
+.note { font-size: 12px; color: var(--tertiary); margin: 12px 0 0; }
+
+.stack { display: grid; gap: 16px; align-content: start; }
+.grid > *, .stack > *, .hero > * { min-width: 0; }
+.reactor { overflow: visible; }
+.full { margin-top: 16px; }
+
+footer { max-width: 1180px; margin: 0 auto; padding: 8px 20px 40px; display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--tertiary); font-size: 12px; }
+footer a:hover { color: var(--secondary); }
+
+/* rolling numerals, as in the app */
+.roll { display: inline-flex; }
+.roll .d { position: relative; display: inline-block; overflow: hidden; height: 1em; line-height: 1; }
+.roll .d .strip-col { display: block; transition: transform .45s cubic-bezier(.25,.9,.3,1); }
+.roll .d .strip-col span { display: block; height: 1em; line-height: 1; text-align: center; }
+.roll .d .ghost { visibility: hidden; }
+.roll .d .strip-col { position: absolute; left: 0; right: 0; top: 0; }
+
+/* entrance */
+.rise { opacity: 0; transform: translateY(10px); animation: rise .7s cubic-bezier(.2,.8,.2,1) forwards; }
+@keyframes rise { to { opacity: 1; transform: none; } }
+
+@media (max-width: 900px) {
+  .hero { grid-template-columns: 1fr auto; min-height: 0; }
+  #planet { display: none; }
+  .grid { grid-template-columns: 1fr; }
+  .strip { grid-template-columns: repeat(2, 1fr); }
+  .strip > div:nth-child(3) { box-shadow: 0 -0.5px 0 var(--separator); }
+  .strip > div:nth-child(4) { box-shadow: -0.5px 0 0 var(--separator), 0 -0.5px 0 var(--separator); }
+}
+@media (max-width: 600px) {
+  .toolbar .pill .hide-sm, .toolbar .download-label { display: none; }
+  .hero { grid-template-columns: 1fr; padding-top: 24px; }
+  .reactor { justify-self: start; grid-auto-flow: column; align-items: center; gap: 16px; justify-items: start; }
+  .reactor a { width: 84px; height: 84px; }
+  .reactor .glow { inset: -12px; filter: blur(16px); }
+  .reactor { padding-left: 6px; }
+  .reactor .core svg { width: 26px; height: 26px; }
+  .row .k { width: 74px; }
+  .kv { grid-template-columns: 1fr; }
+  main { padding: 0 16px 48px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition-duration: 0s !important; }
+  .rise { opacity: 1; transform: none; }
+}
+</style>
+</head>
+<body>
+<canvas id="sky" aria-hidden="true"></canvas>
+<div class="page">
+  <header class="toolbar">
+    <a class="brand" href="#" aria-label="Saturn Pool home">
+      <svg viewBox="0 0 1024 1024" aria-hidden="true">
+        <defs>
+          <clipPath id="front"><rect x="0" y="512" width="1024" height="1024"/></clipPath>
+          <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+            <rect width="1024" height="1024" fill="#fff"/>
+            <g transform="rotate(-22 512 512)"><path d="M38,512 a474,150 0 1,0 948,0 a474,150 0 1,0 -948,0 Z M164,512 a348,64 0 1,1 696,0 a348,64 0 1,1 -696,0 Z" fill="#000" fill-rule="evenodd" clip-path="url(#front)"/></g>
+          </mask>
+        </defs>
+        <g fill="currentColor">
+          <g transform="rotate(-22 512 512)"><path fill-rule="evenodd" d="M60,512 a452,128 0 1,0 904,0 a452,128 0 1,0 -904,0 Z M142,512 a370,86 0 1,1 740,0 a370,86 0 1,1 -740,0 Z"/></g>
+          <circle cx="512" cy="512" r="228" mask="url(#cut)"/>
+          <g transform="rotate(-22 512 512)"><path fill-rule="evenodd" clip-path="url(#front)" d="M60,512 a452,128 0 1,0 904,0 a452,128 0 1,0 -904,0 Z M142,512 a370,86 0 1,1 740,0 a370,86 0 1,1 -740,0 Z"/></g>
+        </g>
+      </svg>
+      <span><b>Saturn Pool</b><small>pool.saturn.boats</small></span>
+    </a>
+    <span class="spacer"></span>
+    <span class="pill" role="status" aria-live="polite">
+      <span><i class="dot" id="st-dot"></i><span id="st-text">Connecting…</span></span>
+      <span class="hide-sm" id="st-height">Block —</span>
+    </span>
+    <a class="mac-button primary" href="https://github.com/saturn-cash/SaturnMiner/releases/latest" target="_blank" rel="noopener">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8m0 0L4.8 6.8M8 10l3.2-3.2M3 13h10"/></svg>
+      <span class="download-label">Get Saturn Miner</span>
+    </a>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="rise">
+        <div class="eyebrow">Pool hashrate</div>
+        <div class="big"><span id="hr-num" class="roll">0.00</span><span class="unit" id="hr-unit">TH/s</span></div>
+        <div class="status-line"><i class="dot" id="hero-dot"></i><span id="hero-status">Waiting for the pool…</span></div>
+      </div>
+      <div class="reactor rise" style="animation-delay:.08s">
+        <a href="#connect" aria-label="Start mining: how to connect">
+          <span class="glow hex spectrum-fill" aria-hidden="true"></span>
+          <span class="rim hex spectrum-fill" aria-hidden="true"></span>
+          <span class="core hex"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 3v8"/><path d="M6.6 6.6a8 8 0 1 0 10.8 0"/></svg></span>
+        </a>
+        <div style="text-align:center"><p>Start mining</p><small>Any SHA-256 miner</small></div>
+      </div>
+      <canvas id="planet" class="rise" style="animation-delay:.14s" aria-hidden="true"></canvas>
+    </section>
+
+    <section class="glass strip rise" style="animation-delay:.2s" aria-label="Pool totals">
+      <div><div class="label">Miners online</div><div class="value" id="s-miners">—</div><div class="sub" id="s-miners-sub">&nbsp;</div></div>
+      <div><div class="label">Blocks found</div><div class="value" id="s-blocks">—</div><div class="sub" id="s-blocks-sub">&nbsp;</div></div>
+      <div><div class="label">Network difficulty</div><div class="value" id="s-diff">—</div><div class="sub" id="s-diff-sub">&nbsp;</div></div>
+      <div><div class="label">Block reward</div><div class="value" id="s-reward">—</div><div class="sub">SAT, split by work</div></div>
+    </section>
+
+    <div class="grid">
+      <section class="glass card rise" id="connect" style="animation-delay:.26s">
+        <div class="card-head"><h2>Connect your miner</h2><span class="aside">Stratum v1 · SHA-256d</span></div>
+        <div class="rows">
+          <div class="row"><span class="k">URL</span><span class="v" id="c-url">stratum+tcp://pool.saturn.boats:3333</span><button class="copy" data-copy="c-url">Copy</button></div>
+          <div class="row"><span class="k">Username</span><span class="v">your sat1… address<span style="color:var(--tertiary)">.worker</span></span><button class="copy" data-copy-text="sat1YOURADDRESS.worker">Copy</button></div>
+          <div class="row"><span class="k">Password</span><span class="v">x</span><button class="copy" data-copy-text="x">Copy</button></div>
+        </div>
+        <div style="margin-top:16px" class="segmented" role="tablist" aria-label="Miner type">
+          <button role="tab" aria-selected="true" data-tab="bitaxe">Bitaxe</button>
+          <button role="tab" aria-selected="false" data-tab="app">Saturn Miner</button>
+          <button role="tab" aria-selected="false" data-tab="asic">Other ASIC</button>
+        </div>
+        <ol class="steps" id="steps"></ol>
+      </section>
+
+      <div class="stack">
+        <section class="glass card rise" style="animation-delay:.3s">
+          <div class="card-head"><h2>Network</h2><span class="aside" id="n-updated"></span></div>
+          <div class="kv">
+            <div><div class="label">Block height</div><div class="value" id="n-height">—</div></div>
+            <div><div class="label">Network hashrate</div><div class="value accent" id="n-hash">—</div></div>
+            <div><div class="label">Pool share</div><div class="value" id="n-share">—</div></div>
+            <div><div class="label">Expected block time</div><div class="value gold" id="n-eta">—</div></div>
+          </div>
+        </section>
+        <section class="glass card rise" style="animation-delay:.34s">
+          <div class="card-head"><h2>Your earnings</h2></div>
+          <form class="lookup" id="lookup">
+            <input class="field" id="addr" placeholder="sat1… address" autocomplete="off" spellcheck="false" aria-label="Your sat1 address">
+            <button class="mac-button" type="submit">Look up</button>
+          </form>
+          <div class="result" id="lookup-result" aria-live="polite"></div>
+        </section>
+      </div>
+    </div>
+
+    <section class="glass card full rise" style="animation-delay:.38s">
+      <div class="card-head"><h2>Miners</h2><span class="aside">Live, last 10 minutes</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Worker</th><th class="n">Hashrate</th><th class="n">Difficulty</th><th class="n">Accepted</th><th class="n">Rejected</th><th class="n">Connected</th></tr></thead>
+          <tbody id="miners"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="miners-empty" hidden>No miners connected right now.</div>
+    </section>
+
+    <div class="grid">
+      <section class="glass card rise" style="animation-delay:.42s">
+        <div class="card-head"><h2>Recent blocks</h2><a class="link" href="https://github.com/saturn-cash/saturn-core" target="_blank" rel="noopener">Saturn Core ›</a></div>
+        <div id="blocks"></div>
+      </section>
+      <section class="glass card rise" style="animation-delay:.46s">
+        <div class="card-head"><h2>Pending payouts</h2><span class="aside">SAT</span></div>
+        <div id="payouts"></div>
+        <p class="note">Block rewards mature after 100 confirmations, then each miner's share is paid to their sat1 address.</p>
+      </section>
+    </div>
+  </main>
+
+  <footer>
+    <span>Saturn Pool</span>
+    <a href="https://github.com/saturn-cash/SaturnMiner/releases/latest" target="_blank" rel="noopener">Download Saturn Miner</a>
+    <a href="https://github.com/saturn-cash/saturn-core" target="_blank" rel="noopener">Saturn Core</a>
+    <span id="foot-api"></span>
+  </footer>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ---------------- formatting ---------------- */
+  const UNITS = ['H/s', 'kH/s', 'MH/s', 'GH/s', 'TH/s', 'PH/s', 'EH/s'];
+  function splitRate(h) {
+    if (!h || h < 1) return ['0.00', 'TH/s'];
+    let i = 0;
+    while (h >= 1000 && i < UNITS.length - 1) { h /= 1000; i++; }
+    return [h.toFixed(h >= 100 ? 1 : 2), UNITS[i]];
+  }
+  const rate = (h) => splitRate(h).join(' ');
+  const int = (n) => Math.round(n).toLocaleString('en-US');
+  function compact(n) {
+    if (n == null) return '—';
+    if (n >= 1e12) return (n / 1e12).toFixed(2) + 'T';
+    if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+    if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+    if (n >= 1e4) return (n / 1e3).toFixed(1) + 'K';
+    if (n > 0 && n < 10) return +n.toPrecision(3) + '';
+    return int(n);
+  }
+  function ago(iso) {
+    if (!iso) return '—';
+    const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+    if (s < 60) return Math.floor(s) + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+  function duration(sec) {
+    if (!isFinite(sec) || sec <= 0) return '—';
+    if (sec < 90) return Math.round(sec) + ' s';
+    if (sec < 5400) return Math.round(sec / 60) + ' min';
+    if (sec < 172800) return (sec / 3600).toFixed(1) + ' h';
+    return Math.round(sec / 86400) + ' days';
+  }
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const short = (a) => (a.length > 18 ? a.slice(0, 10) + '…' + a.slice(-6) : a);
+
+  /* ---------------- rolling numerals ---------------- */
+  function setRoll(el, text) {
+    if (el.dataset.text === text) return;
+    const old = el.dataset.text || '';
+    el.dataset.text = text;
+    el.setAttribute('aria-label', text);
+    const chars = text.split('');
+    // rebuild only when the shape changes (digit count, decimal point)
+    const shape = text.replace(/\d/g, '0');
+    if (el.dataset.shape !== shape) {
+      el.dataset.shape = shape;
+      el.innerHTML = chars.map((ch) => /\d/.test(ch)
+        ? `<span class="d" aria-hidden="true"><span class="ghost">0</span><span class="strip-col">${'0123456789'.split('').map((n) => `<span>${n}</span>`).join('')}</span></span>`
+        : `<span aria-hidden="true">${esc(ch)}</span>`).join('');
+    }
+    const cols = el.querySelectorAll('.strip-col');
+    let k = 0;
+    chars.forEach((ch) => {
+      if (!/\d/.test(ch)) return;
+      const col = cols[k++];
+      if (col) col.style.transform = `translateY(${-Number(ch)}em)`;
+    });
+  }
+
+  /* ---------------- data ---------------- */
+  // the API lives on the pool's stats port; when this page is served from that port it is same-origin
+  const bases = [''];
+  if (location.port !== '8081') bases.push(`${location.protocol}//${location.hostname || 'pool.saturn.boats'}:8081`);
+  let base = null;
+  async function api(path) {
+    const tries = base != null ? [base] : bases;
+    for (const b of tries) {
+      try {
+        const r = await fetch(b + path, { cache: 'no-store' });
+        if (!r.ok) continue;
+        const j = await r.json();
+        base = b;
+        return j;
+      } catch (e) { /* try the next */ }
+    }
+    base = null;
+    throw new Error('pool unreachable');
+  }
+
+  let last = null;
+  async function refresh() {
+    try {
+      const s = await api('/stats');
+      last = s;
+      render(s);
+    } catch (e) {
+      $('st-dot').className = 'dot off';
+      $('st-text').textContent = 'Offline';
+      $('hero-dot').className = 'dot off';
+      $('hero-status').textContent = 'Can’t reach the pool right now. Retrying…';
+    }
+  }
+
+  function render(s) {
+    const miners = s.connected || [];
+    const poolHash = s.hashrate || 0;
+    const [num, unit] = splitRate(poolHash);
+    setRoll($('hr-num'), num);
+    $('hr-unit').textContent = unit;
+
+    $('st-dot').className = 'dot on';
+    $('st-text').textContent = 'Online';
+    $('st-height').textContent = s.height ? `Mining block ${int(s.height)}` : 'Block —';
+    $('hero-dot').className = miners.length ? 'dot on' : 'dot';
+    $('hero-status').textContent = miners.length
+      ? `${miners.length} miner${miners.length === 1 ? '' : 's'} hashing on block ${int(s.height || 0)}`
+      : 'Pool is up. No miners connected yet.';
+
+    $('s-miners').textContent = int(miners.length);
+    $('s-miners-sub').textContent = `${int(Object.keys(s.miners || {}).length)} workers all-time`;
+    const blocks = s.blocks || [];
+    $('s-blocks').textContent = int(blocks.length);
+    $('s-blocks-sub').textContent = blocks[0] ? `Last ${ago(blocks[0].time)}` : 'None yet';
+    const net = s.network || {};
+    $('s-diff').textContent = net.difficulty != null ? compact(net.difficulty) : '—';
+    $('s-diff-sub').textContent = net.difficulty != null ? 'Retargets every block' : ' ';
+    $('s-reward').textContent = s.reward != null ? (+s.reward.toFixed(8)).toLocaleString('en-US') : '—';
+
+    if (s.stratum) $('c-url').textContent = s.stratum;
+
+    $('n-height').textContent = net.blocks != null ? int(net.blocks) : '—';
+    $('n-hash').textContent = net.hashrate ? rate(net.hashrate) : '—';
+    const share = net.hashrate ? Math.min(1, poolHash / net.hashrate) : null;
+    $('n-share').textContent = share != null && poolHash ? (share * 100).toFixed(share > 0.995 ? 0 : 1) + '%' : '—';
+    $('n-eta').textContent = poolHash && net.difficulty ? duration((net.difficulty * 2 ** 32) / poolHash) : '—';
+    $('n-updated').textContent = net.updated ? `Updated ${ago(new Date(net.updated).toISOString())}` : '';
+
+    // miners table
+    const body = $('miners');
+    body.innerHTML = miners
+      .slice()
+      .sort((a, b) => (b.hashrate || 0) - (a.hashrate || 0))
+      .map((m) => {
+        const [addr, name] = String(m.worker).split('.');
+        return `<tr>
+          <td><div class="worker"><span class="dot on"></span><b>${esc(name || 'default')}</b><span class="addr" title="${esc(addr)}">${esc(short(addr))}</span></div></td>
+          <td class="n">${m.hashrate ? rate(m.hashrate) : '<span style="color:var(--tertiary)">measuring…</span>'}</td>
+          <td class="n">${compact(m.difficulty)}</td>
+          <td class="n">${int(m.accepted)}</td>
+          <td class="n" style="color:${m.rejected ? 'var(--warn)' : 'inherit'}">${int(m.rejected)}</td>
+          <td class="n" style="color:var(--secondary)">${m.since ? ago(m.since).replace(' ago', '') : '—'}</td>
+        </tr>`;
+      }).join('');
+    $('miners-empty').hidden = miners.length > 0;
+
+    // blocks
+    $('blocks').innerHTML = blocks.length
+      ? blocks.slice(0, 8).map((b) => `<div class="block">
+          <span class="hexi hex spectrum-fill" data-speed="slow"></span>
+          <div class="meta"><div><b>Block ${int(b.height)}</b> <span style="color:var(--secondary)">· ${(+b.reward).toLocaleString('en-US')} SAT · ${esc(String(b.miner).split('.')[1] || short(String(b.miner)))}</span></div><div title="${esc(b.hash)}">${esc(b.hash)}</div></div>
+          <span class="when">${ago(b.time)}</span></div>`).join('')
+      : `<div class="empty">No blocks yet. The first one is ${poolHash && net.difficulty ? 'expected in about ' + duration((net.difficulty * 2 ** 32) / poolHash) : 'on its way'}.</div>`;
+
+    // payouts
+    const pending = Object.entries(s.pending || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+    $('payouts').innerHTML = pending.length
+      ? `<div class="rows">${pending.slice(0, 8).map(([a, v]) => `<div class="row"><span class="v" style="color:var(--secondary)" title="${esc(a)}">${esc(short(a))}</span><span style="font-variant-numeric:tabular-nums;font-weight:500">${(+v.toFixed(8)).toLocaleString('en-US')}</span></div>`).join('')}</div>`
+      : '<div class="empty">Nothing pending yet.</div>';
+
+    $('foot-api').textContent = '';
+  }
+
+  /* ---------------- earnings lookup ---------------- */
+  $('lookup').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const raw = $('addr').value.trim().split('.')[0].toLowerCase();
+    const out = $('lookup-result');
+    if (!/^sat1[02-9ac-hj-np-z]{8,87}$/.test(raw)) {
+      out.innerHTML = '<div class="empty" style="color:var(--warn)">That isn’t a sat1 address.</div>';
+      return;
+    }
+    try { localStorage.setItem('saturn-pool-addr', raw); } catch (_) {}
+    out.innerHTML = '<div class="empty">Looking up…</div>';
+    try {
+      const r = await api('/stats/' + encodeURIComponent(raw));
+      const live = (last?.connected || []).filter((m) => String(m.worker).split('.')[0] === raw);
+      const h = live.reduce((a, m) => a + (m.hashrate || 0), 0);
+      out.innerHTML = `<div class="kv">
+        <div><div class="label">Pending</div><div class="value gold">${(+(r.pendingPayout || 0).toFixed(8)).toLocaleString('en-US')} <span style="font-size:13px;color:var(--secondary)">SAT</span></div></div>
+        <div><div class="label">Live hashrate</div><div class="value">${live.length ? rate(h) : '<span style="color:var(--tertiary)">Offline</span>'}</div></div>
+        <div><div class="label">Work submitted</div><div class="value">${compact(r.shares || 0)}</div></div>
+        <div><div class="label">Blocks found</div><div class="value">${int(r.blocksFound || 0)}</div></div>
+      </div><p class="note">Last share ${ago(r.lastShare)}.</p>`;
+    } catch (_) {
+      out.innerHTML = '<div class="empty" style="color:var(--warn)">Couldn’t reach the pool. Try again in a moment.</div>';
+    }
+  });
+  try { const saved = localStorage.getItem('saturn-pool-addr'); if (saved) $('addr').value = saved; } catch (_) {}
+
+  /* ---------------- connect tabs + copy ---------------- */
+  const STEPS = {
+    bitaxe: [
+      'Open AxeOS (or the Bitaxe app) and go to <b>Settings → Pool</b>.',
+      'Stratum URL <code>pool.saturn.boats</code>, port <code>3333</code>.',
+      'User: your <code>sat1…</code> address, optionally followed by <code>.name</code>. Password <code>x</code>.',
+      'Save and restart. Shares appear in the Miners list within a minute.',
+    ],
+    app: [
+      'Download Saturn Miner for macOS, Windows or Linux from the Releases page.',
+      'Open <b>Mining</b>, choose <b>Pool</b>; the URL is already filled in.',
+      'Paste your <code>sat1…</code> address (or create one in <b>Wallet</b>) and press the hexagon.',
+    ],
+    asic: [
+      'Any SHA-256 miner that speaks Stratum v1 works: Antminer, Whatsminer, NerdMiner, cgminer.',
+      'Pool URL <code>stratum+tcp://pool.saturn.boats:3333</code>.',
+      'Worker: <code>sat1…address.workername</code>, password <code>x</code>. Difficulty adjusts automatically.',
+    ],
+  };
+  function showTab(id) {
+    document.querySelectorAll('[data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === id)));
+    $('steps').innerHTML = STEPS[id].map((s) => `<li><span>${s}</span></li>`).join('');
+  }
+  document.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
+  showTab('bitaxe');
+
+  document.querySelectorAll('.copy').forEach((btn) => btn.addEventListener('click', async () => {
+    const text = btn.dataset.copyText ?? $(btn.dataset.copy).textContent.trim();
+    try { await navigator.clipboard.writeText(text); } catch (_) {
+      const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select();
+      try { document.execCommand('copy'); } catch (__) {} t.remove();
+    }
+    btn.textContent = 'Copied'; btn.classList.add('done');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('done'); }, 1400);
+  }));
+
+  /* ---------------- starfield ---------------- */
+  const sky = $('sky'), sctx = sky.getContext('2d');
+  let stars = [];
+  function sizeSky() {
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    sky.width = innerWidth * dpr; sky.height = innerHeight * dpr;
+    sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const n = Math.round((innerWidth * innerHeight) / 5200);
+    stars = Array.from({ length: n }, () => ({ x: Math.random() * innerWidth, y: Math.random() * innerHeight, r: Math.random() ** 3 * 1.3 + 0.25, a: Math.random() * 0.6 + 0.2, t: Math.random() * 6.28, s: Math.random() * 0.8 + 0.2 }));
+  }
+  function drawSky(time) {
+    sctx.clearRect(0, 0, innerWidth, innerHeight);
+    // faint warm haze behind the hero, cool at the bottom
+    const g = sctx.createRadialGradient(innerWidth * 0.78, 180, 0, innerWidth * 0.78, 180, innerWidth * 0.6);
+    g.addColorStop(0, 'rgba(245,185,113,0.07)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    sctx.fillStyle = g; sctx.fillRect(0, 0, innerWidth, innerHeight);
+    for (const s of stars) {
+      const tw = reduce ? 1 : 0.75 + 0.25 * Math.sin(time * 0.001 * s.s + s.t);
+      sctx.globalAlpha = s.a * tw;
+      sctx.fillStyle = '#fff';
+      sctx.beginPath(); sctx.arc(s.x, s.y, s.r, 0, 6.283); sctx.fill();
+    }
+    sctx.globalAlpha = 1;
+  }
+
+  /* ---------------- planet ---------------- */
+  const pc = $('planet'), pctx = pc.getContext('2d');
+  let PW = 0, PH = 0;
+  function sizePlanet() {
+    const r = pc.getBoundingClientRect();
+    if (!r.width) return;
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    PW = r.width; PH = r.height;
+    pc.width = PW * dpr; pc.height = PH * dpr;
+    pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  // butterscotch bands, sampled top to bottom
+  const BANDS = ['#e9cf9f', '#e2bd85', '#d9aa6c', '#e8c48d', '#cf9a5d', '#dcb37a', '#efd3a1', '#d4a265', '#c48f55', '#e3c08a', '#d8ac70', '#b98652'];
+  function drawPlanet(time) {
+    if (!PW) return;
+    const c = pctx, cx = PW * 0.5, cy = PH * 0.5, R = Math.min(PW / 5.1, PH * 0.3);
+    const tilt = -0.36, ry = 0.26;
+    const spin = reduce ? 0 : time * 0.00002;
+    c.clearRect(0, 0, PW, PH);
+    c.save(); c.translate(cx, cy); c.rotate(tilt);
+
+    const ring = (half) => {
+      const rings = [[1.28, 1.52, 'rgba(206,182,145,0.28)'], [1.54, 1.98, 'rgba(226,203,165,0.62)'], [2.02, 2.07, 'rgba(0,0,0,0)'], [2.07, 2.32, 'rgba(203,178,140,0.48)']];
+      for (const [a, b, col] of rings) {
+        c.beginPath();
+        c.ellipse(0, 0, R * b, R * b * ry, 0, half ? Math.PI : 0, half ? 2 * Math.PI : Math.PI, false);
+        c.ellipse(0, 0, R * a, R * a * ry, 0, half ? 2 * Math.PI : Math.PI, half ? Math.PI : 0, true);
+        c.closePath();
+        c.fillStyle = col; c.fill();
+      }
+      // fine grooves
+      c.lineWidth = 0.5;
+      for (let i = 0; i < 46; i++) {
+        const k = 1.3 + i * 0.022;
+        if (k > 2.0 && k < 2.07) continue;
+        c.beginPath();
+        c.ellipse(0, 0, R * k, R * k * ry, 0, half ? Math.PI : 0, half ? 2 * Math.PI : Math.PI);
+        c.strokeStyle = `rgba(255,236,205,${0.04 + 0.05 * Math.abs(Math.sin(i * 1.7))})`; c.stroke();
+      }
+    };
+    ring(true); // back half
+
+    // planet body
+    c.save();
+    c.beginPath(); c.arc(0, 0, R, 0, 6.283); c.clip();
+    const n = BANDS.length;
+    for (let i = 0; i < n * 2; i++) {
+      const y0 = -R + (i / (n * 2)) * 2 * R;
+      const wob = Math.sin(i * 1.9 + spin * 40) * R * 0.012;
+      c.fillStyle = BANDS[(i + Math.floor(i / 3)) % n];
+      c.fillRect(-R, y0 + wob, 2 * R, (2 * R) / (n * 2) + 1.5);
+    }
+    // north-pole hexagon storm hint
+    c.globalAlpha = 0.35; c.fillStyle = '#7d9fae';
+    c.beginPath();
+    for (let i = 0; i < 6; i++) { const a = i * Math.PI / 3 + spin * 30; c.lineTo(Math.cos(a) * R * 0.32, -R * 0.9 + Math.sin(a) * R * 0.08); }
+    c.closePath(); c.fill(); c.globalAlpha = 1;
+    // limb darkening + terminator
+    const lg = c.createRadialGradient(-R * 0.35, -R * 0.35, R * 0.1, 0, 0, R * 1.02);
+    lg.addColorStop(0, 'rgba(255,245,225,0.18)'); lg.addColorStop(0.55, 'rgba(0,0,0,0)'); lg.addColorStop(1, 'rgba(0,0,0,0.55)');
+    c.fillStyle = lg; c.fillRect(-R, -R, 2 * R, 2 * R);
+    const sh = c.createLinearGradient(-R, 0, R, 0);
+    sh.addColorStop(0, 'rgba(0,0,0,0)'); sh.addColorStop(0.62, 'rgba(0,0,0,0.05)'); sh.addColorStop(1, 'rgba(0,0,0,0.78)');
+    c.fillStyle = sh; c.fillRect(-R, -R, 2 * R, 2 * R);
+    // ring shadow on the planet
+    c.beginPath(); c.ellipse(0, R * 0.16, R * 2.0, R * 2.0 * ry * 0.5, 0, 0, Math.PI); c.ellipse(0, R * 0.16, R * 1.55, R * 1.55 * ry * 0.42, 0, Math.PI, 0, true);
+    c.fillStyle = 'rgba(0,0,0,0.28)'; c.fill();
+    c.restore();
+
+    // front half of the rings, with the planet's shadow cast across them
+    c.save();
+    ring(false);
+    c.globalCompositeOperation = 'source-atop';
+    const rs = c.createLinearGradient(R * 0.4, 0, R * 2.4, 0);
+    rs.addColorStop(0, 'rgba(0,0,0,0)'); rs.addColorStop(0.35, 'rgba(0,0,0,0.0)'); rs.addColorStop(1, 'rgba(0,0,0,0.35)');
+    c.fillStyle = rs; c.fillRect(-R * 2.5, -R, R * 5, R * 2);
+    c.restore();
+
+    c.restore();
+  }
+
+  function frame(t) {
+    drawSky(t); drawPlanet(t);
+    if (!reduce) requestAnimationFrame(frame);
+  }
+  function resize() { sizeSky(); sizePlanet(); if (reduce) frame(0); }
+  addEventListener('resize', resize);
+  resize();
+  requestAnimationFrame(frame);
+
+  refresh();
+  setInterval(refresh, 5000);
+})();
+</script>
+</body>
+</html>

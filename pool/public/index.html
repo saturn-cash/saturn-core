@@ -262,6 +262,7 @@ footer a:hover { color: var(--secondary); }
   .rise, .reveal { opacity: 1; transform: none; filter: none; }
   html { scroll-behavior: auto; }
 }
+.solo-tag{display:inline-block;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:1px 7px;border-radius:999px;margin-left:4px;vertical-align:1px;color:#f5b971;border:1px solid rgba(245,185,113,.45);background:rgba(245,185,113,.1)}
 </style>
 </head>
 <body>
@@ -386,7 +387,7 @@ footer a:hover { color: var(--secondary); }
         <div class="glass card reveal" style="--d:.08s">
           <div class="head"><h2>Pending payouts</h2><span class="aside">SAT</span></div>
           <div id="payouts"></div>
-          <p class="note">Each block's reward is split by the work every miner did since the previous block. Payouts go to the sat1 address you mine with.</p>
+          <p class="note">Each block's reward is split by the work every miner did since the previous block. Payouts go to the sat1 address you mine with. Mining solo (password <code>solo</code>) skips the split: a block you find pays its whole reward straight to your address.</p>
         </div>
       </div>
     </section>
@@ -397,7 +398,7 @@ footer a:hover { color: var(--secondary); }
         <div class="rows">
           <div class="row"><span class="k">Pool URL</span><span class="v" id="c-url">stratum+tcp://pool.saturn.boats:3333</span><button class="copy" data-copy="c-url">Copy</button></div>
           <div class="row"><span class="k">Username</span><span class="v">your sat1… address<span class="dim">.workername</span></span><button class="copy" data-copy-text="sat1YOURADDRESS.worker">Copy</button></div>
-          <div class="row"><span class="k">Password</span><span class="v">x</span><button class="copy" data-copy-text="x">Copy</button></div>
+          <div class="row"><span class="k">Password</span><span class="v">x <span class="dim">· or <b>solo</b> to keep every block you find for yourself</span></span><button class="copy" data-copy-text="x">Copy</button></div>
         </div>
       </div>
       <div class="ways">
@@ -633,7 +634,7 @@ footer a:hover { color: var(--secondary); }
           const finder = String(b.miner).split('.')[1] || short(String(b.miner));
           return `<div class="block${isNew ? ' row-in' : ''}" style="--d:${(bi * 0.05).toFixed(2)}s">
             <span class="hexi hex spectrum-fill${isNew ? ' pop' : ''}" style="--d:${(bi * 0.05 + 0.1).toFixed(2)}s"></span>
-            <div class="meta" style="min-width:0"><div><b>Block ${int(b.height)}</b> <span class="dim">· ${esc(finder)} · ${ago(b.time)}</span></div><div class="hash" title="${esc(b.hash)}">${esc(b.hash)}</div></div>
+            <div class="meta" style="min-width:0"><div><b>Block ${int(b.height)}</b>${b.solo ? ' <span class="solo-tag" title="Mined solo: the whole reward went straight to the finder">solo</span>' : ''} <span class="dim">· ${esc(finder)} · ${ago(b.time)}</span></div><div class="hash" title="${esc(b.hash)}">${esc(b.hash)}</div></div>
             <div class="right"><div style="font-weight:600">${sat(b.reward)} SAT</div><div class="bar" title="${conf} of 100 confirmations"><i class="${mature ? 'done' : ''}" style="width:${Math.min(100, conf)}%"></i></div><div class="sub">${mature ? 'Mature' : `${conf}/100 confirmations`}</div></div>
           </div>`;
         }).join('')

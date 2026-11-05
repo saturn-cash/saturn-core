@@ -54,7 +54,7 @@ function readJson(file, fallback) {
   }
 }
 
-function recordBlock(worker, height, reward, hash) {
+function recordBlock(worker, height, reward, hash, solo = false) {
   const workers = readJson("./data/workers.json", {});
   if (workers[worker]) {
     workers[worker].blocks = (workers[worker].blocks || 0) + 1;
@@ -62,7 +62,7 @@ function recordBlock(worker, height, reward, hash) {
   }
   const file = "./data/blocks.json";
   const blocks = readJson(file, []);
-  blocks.unshift({ height, miner: worker, reward, hash, time: new Date().toISOString() });
+  blocks.unshift({ height, miner: worker, reward, hash, time: new Date().toISOString(), ...(solo ? { solo: true } : {}) });
   fs.writeFileSync(file, JSON.stringify(blocks.slice(0, 25), null, 2));
 }
 
@@ -112,22 +112,30 @@ function withPending(payouts) {
 }
 
 // shares are weighted by their difficulty, so a Bitaxe at diff 4096 earns 4096x a diff-1 share
-function recordShare(worker, difficulty) {
-  const file = "./data/stats.json";
-  const stats = readJson(file, { totalShares: 0, miners: {} });
-  stats.totalShares = (stats.totalShares || 0) + difficulty;
-  if (!stats.miners[worker]) stats.miners[worker] = { shares: 0 };
-  stats.miners[worker].shares += difficulty;
-  stats.miners[worker].lastShare = new Date().toISOString();
-  fs.writeFileSync(file, JSON.stringify(stats, null, 2));
-  // all-time record per worker; stats.json is the current round and resets at every block
+function recordWorker(worker, difficulty, lastShare = new Date().toISOString()) {
   const wfile = "./data/workers.json";
   const workers = readJson(wfile, {});
   const w = (workers[worker] = workers[worker] || { work: 0, shares: 0, blocks: 0, firstSeen: new Date().toISOString() });
   w.work += difficulty;
   w.shares += 1;
-  w.lastShare = stats.miners[worker].lastShare;
+  w.lastShare = lastShare;
   fs.writeFileSync(wfile, JSON.stringify(workers, null, 2));
+}
+
+function recordShare(worker, difficulty, solo = false) {
+  const file = "./data/stats.json";
+  const stats = readJson(file, { totalShares: 0, miners: {} });
+  if (solo) {
+    // solo work isn't part of the pool's round: only the all-time record below counts it
+    recordWorker(worker, difficulty);
+    return;
+  }
+  stats.totalShares = (stats.totalShares || 0) + difficulty;
+  if (!stats.miners[worker]) stats.miners[worker] = { shares: 0 };
+  stats.miners[worker].shares += difficulty;
+  stats.miners[worker].lastShare = new Date().toISOString();
+  fs.writeFileSync(file, JSON.stringify(stats, null, 2));
+  recordWorker(worker, difficulty, stats.miners[worker].lastShare);
 }
 
 /* ------------------------------------------------------------------ */
@@ -215,14 +223,14 @@ function merkleBranches(txids) {
 // "rules"). Before that, a coinbase witness makes the node reject the block as "unexpected-witness".
 const witnessActive = (t) => !!t.default_witness_commitment && (t.rules || []).some((r) => r.replace(/^!/, "") === "segwit");
 
-function buildJob(t, clean) {
+function buildJob(t, clean, outScript = payoutScript) {
   const id = (nextJobId++).toString(16);
   const scriptPrefix = heightScript(t.height);
   const scriptSuffix = pushData(POOL_TAG);
   const scriptLen = scriptPrefix.length + 4 + EXTRANONCE2_SIZE + scriptSuffix.length;
   if (scriptLen > 100) throw new Error("coinbase script too long");
 
-  const outputs = [Buffer.concat([u64le(t.coinbasevalue), varint(payoutScript.length / 2), Buffer.from(payoutScript, "hex")])];
+  const outputs = [Buffer.concat([u64le(t.coinbasevalue), varint(outScript.length / 2), Buffer.from(outScript, "hex")])];
   if (witnessActive(t)) {
     const c = Buffer.from(t.default_witness_commitment, "hex");
     outputs.push(Buffer.concat([u64le(0), varint(c.length), c]));
@@ -252,8 +260,8 @@ function buildJob(t, clean) {
     created: Date.now(),
   };
   jobs.set(id, job);
-  // keep the last 20 jobs so in-flight shares on recent work are still accepted
-  while (jobs.size > 20) jobs.delete(jobs.keys().next().value);
+  // keep recent jobs (pool and solo) so in-flight shares on recent work are still accepted
+  while (jobs.size > 200) jobs.delete(jobs.keys().next().value);
   return job;
 }
 
@@ -327,14 +335,31 @@ function setDifficulty(c, d) {
   send(c.socket, { id: null, method: "mining.set_difficulty", params: [c.difficulty] });
 }
 
+// Solo miners mine the same template, but its coinbase pays their own address the whole reward.
+// One solo job per (pool job, payout script), shared by every solo miner with that address.
+const soloJobs = new Map(); // `${poolJobId}:${script}` -> job
+function jobFor(c) {
+  if (!c.soloScript) return currentJob;
+  const key = `${currentJob.id}:${c.soloScript}`;
+  let job = soloJobs.get(key);
+  if (!job) {
+    job = buildJob(currentJob.template, currentJob.clean, c.soloScript);
+    job.solo = true;
+    soloJobs.set(key, job);
+    while (soloJobs.size > 200) soloJobs.delete(soloJobs.keys().next().value);
+  }
+  return job;
+}
+
 function sendJob(c) {
   if (!currentJob) return;
+  const job = jobFor(c);
   // a job re-sent after a difficulty change keeps the easier of the two, so shares the miner is
   // already working on at the old difficulty still count
-  const prev = c.jobDiff.get(currentJob.id);
-  c.jobDiff.set(currentJob.id, prev === undefined ? c.difficulty : Math.min(prev, c.difficulty));
+  const prev = c.jobDiff.get(job.id);
+  c.jobDiff.set(job.id, prev === undefined ? c.difficulty : Math.min(prev, c.difficulty));
   if (c.jobDiff.size > 40) c.jobDiff.delete(c.jobDiff.keys().next().value);
-  send(c.socket, { id: null, method: "mining.notify", params: notifyParams(currentJob) });
+  send(c.socket, { id: null, method: "mining.notify", params: notifyParams(job) });
 }
 
 // aim for one share every TARGET_SHARE_SECONDS; move at most 4x per step
@@ -418,7 +443,7 @@ async function handleSubmit(c, msg) {
   c.accepted++;
   c.windowShares++;
   c.recent.push([Date.now(), diff]);
-  recordShare(c.worker, diff);
+  recordShare(c.worker, diff, !!job.solo);
   send(c.socket, { id: msg.id, result: true, error: null });
 
   if (value <= job.target) {
@@ -435,8 +460,9 @@ async function handleSubmit(c, msg) {
         console.log("REAL BLOCK ACCEPTED!", t.height, blockHash);
         refreshNetwork();
         const rewardSat = t.coinbasevalue / 100000000;
-        recordBlock(c.worker, t.height, rewardSat, blockHash);
-        creditPayouts(rewardSat, t.height, blockHash);
+        recordBlock(c.worker, t.height, rewardSat, blockHash, !!job.solo);
+        // a solo block already paid its finder in the coinbase; pool blocks are split by work
+        if (!job.solo) creditPayouts(rewardSat, t.height, blockHash);
         await refreshTemplate(true);
       } else {
         console.error("submitblock rejected block", t.height, ":", result);
@@ -535,10 +561,22 @@ const server = net.createServer((socket) => {
               send(socket, { id: msg.id, result: false, error: [24, "username must be your sat1… address (optionally .workername)", null] });
               break;
             }
+            // password "solo" (or "m=solo"): the miner's blocks pay its own address in full
+            const password = String(msg.params?.[1] || "");
+            if (/(^|[\s,;])(m=)?solo($|[\s,;])/i.test(password)) {
+              try {
+                const v = await rpc("validateaddress", [address]);
+                if (!v.isvalid) throw new Error("invalid address");
+                c.soloScript = v.scriptPubKey;
+              } catch (e) {
+                send(socket, { id: msg.id, result: false, error: [24, `solo mining needs a valid address: ${e.message}`, null] });
+                break;
+              }
+            }
             c.worker = worker;
             c.authorized = true;
             send(socket, { id: msg.id, result: true, error: null });
-            console.log("authorized miner:", worker, "extranonce1", c.extranonce1);
+            console.log(`authorized ${c.soloScript ? "SOLO " : ""}miner:`, worker, "extranonce1", c.extranonce1);
             sendJob(c);
             break;
           }
@@ -658,7 +696,7 @@ function handleHttp(req, res) {
           miners: stats.miners || {},
           workers: readJson("./data/workers.json", {}),
           blocks,
-          connected: [...clients].filter((c) => c.authorized).map((c) => ({ worker: c.worker, difficulty: c.difficulty, accepted: c.accepted, rejected: c.rejected, hashrate: liveHashrate(c), since: new Date(c.since).toISOString() })),
+          connected: [...clients].filter((c) => c.authorized).map((c) => ({ worker: c.worker, solo: !!c.soloScript, difficulty: c.difficulty, accepted: c.accepted, rejected: c.rejected, hashrate: liveHashrate(c), since: new Date(c.since).toISOString() })),
           hashrate: [...clients].filter((c) => c.authorized).reduce((a, c) => a + liveHashrate(c), 0),
           height: template?.height ?? null,
           // difficulty of the block being mined now (getmininginfo reports the tip's)

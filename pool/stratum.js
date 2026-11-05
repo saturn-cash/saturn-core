@@ -275,8 +275,15 @@ function send(socket, obj) {
   if (!socket.destroyed) socket.write(JSON.stringify(obj) + "\n");
 }
 
+// whole powers of two: ESP-Miner (Bitaxe) truncates set_difficulty to an integer, so a fractional
+// difficulty made it submit shares the pool then judged too easy
+function roundDiff(d) {
+  const clamped = Math.min(MAX_DIFF, Math.max(MIN_DIFF, d));
+  return 2 ** Math.round(Math.log2(clamped));
+}
+
 function setDifficulty(c, d) {
-  c.difficulty = Math.min(MAX_DIFF, Math.max(MIN_DIFF, d));
+  c.difficulty = roundDiff(d);
   send(c.socket, { id: null, method: "mining.set_difficulty", params: [c.difficulty] });
 }
 
@@ -301,16 +308,23 @@ function retarget(c) {
   c.windowStart = Date.now();
   c.windowShares = 0;
   if (factor > 0.8 && factor < 1.25) return;
-  const next = Math.min(MAX_DIFF, Math.max(MIN_DIFF, c.difficulty * factor));
+  const next = roundDiff(c.difficulty * factor);
   if (next === c.difficulty) return;
   setDifficulty(c, next);
-  sendJob(c); // new difficulty applies from the next job
+  // the new difficulty applies to the next job. Send a fresh job id rather than re-sending the
+  // current one: ESP-Miner restarts extranonce2 at 0 on every notify, so a repeated job would
+  // make it re-hash work it already did and submit duplicates
+  if (template) {
+    currentJob = buildJob(template, false);
+    for (const x of clients) if (x.authorized) sendJob(x);
+  }
 }
 
 async function handleSubmit(c, msg) {
   const [worker, jobId, en2Hex, ntimeHex, nonceHex, versionBitsHex] = msg.params || [];
   const reject = (code, text) => {
     c.rejected++;
+    if (c.rejected <= 50 || c.rejected % 100 === 0) console.log(`share rejected from ${c.worker || socket_addr(c)}: ${text} (job ${jobId})`);
     send(c.socket, { id: msg.id, result: false, error: [code, text, null] });
   };
   if (!c.authorized) return reject(24, "unauthorized");
@@ -328,7 +342,7 @@ async function handleSubmit(c, msg) {
     if (!/^[0-9a-f]{1,8}$/i.test(versionBitsHex)) return reject(20, "bad version bits");
     const bits = parseInt(versionBitsHex, 16);
     if ((bits & ~c.versionMask) !== 0) return reject(20, "version bits outside mask");
-    version = ((t.version & ~c.versionMask) | (bits & c.versionMask)) >>> 0;
+    version = (t.version ^ bits) >>> 0;
   }
 
   const key = `${jobId}:${c.extranonce1}:${en2Hex}:${ntimeHex}:${nonceHex}:${version}`.toLowerCase();
@@ -383,6 +397,8 @@ async function handleSubmit(c, msg) {
   }
   retarget(c);
 }
+
+const socket_addr = (c) => c.socket.remoteAddress;
 
 const server = net.createServer((socket) => {
   miners++;

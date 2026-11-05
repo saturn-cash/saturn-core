@@ -13,8 +13,8 @@ on:
 
 env:
   MINER_REPO: saturn-cash/saturn-miner-v0.3.0
-  MINER_REF: 64c0576e225fdadac3cead1e7837a831d9ec5e3e # Saturn Miner 0.5.0
-  MINER_TAG: miner-v0.5.0
+  MINER_REF: 6ddb2dc85844199edad0c5d951400e563ca75617 # Saturn 0.6.0
+  MINER_TAG: miner-v0.6.0
 
 jobs:
   build:
@@ -75,10 +75,10 @@ jobs:
         with:
           projectPath: miner
           tagName: ${{ env.MINER_TAG }}
-          releaseName: 'Saturn Miner v__VERSION__'
+          releaseName: 'Saturn v__VERSION__'
           releaseCommitish: ${{ github.sha }}
           releaseBody: |
-            The desktop miner for the Saturn (SAT) network. It mines real Saturn through Saturn Pool and shows the live chain and your pool earnings.
+            Saturn: the desktop miner and wallet for the Saturn (SAT) network.
 
             **Download the installer for your computer:**
             - **Windows**: the `.msi` or `-setup.exe`
@@ -86,13 +86,13 @@ jobs:
             - **Mac (Intel)**: the `x64.dmg`
             - **Linux**: the `.AppImage` (any distro), `.deb` (Ubuntu/Debian) or `.rpm` (Fedora)
 
-            **What's new in 0.5.0**
-            - A redesign that looks and feels like a native Mac app: system fonts, sidebar, glass panels and the rainbow hexagon
-            - Real network data without running your own node: block height, difficulty, network hashrate and your pending pool payout come straight from Saturn Pool
-            - No placeholder coins: every wallet starts at 0 and only shows what you've actually mined
-            - New Saturn logo, smoother animations, and Bitaxe setup from the Hardware screen
+            **What's new in 0.6.0**
+            - **Built-in wallet.** Create a wallet or restore one from a 12-word recovery phrase, see your balance and mining rewards as they mature, receive with a QR code, and send SAT. Transactions are signed on your computer; the recovery phrase never leaves it. No Saturn Core node needed.
+            - New wallets automatically receive your mining payouts.
+            - Export your wallet to Saturn Core whenever you want to run a full node.
+            - The app is now simply **Saturn**, with a new white icon and its own title bar on Windows and Linux.
 
-            **Start mining:** open the app, paste your `sat1…` address on the Mining screen and press the hexagon. Pool: `stratum+tcp://pool.saturn.boats:3333`. Stats: http://pool.saturn.boats:8081
+            **Start mining:** open Saturn, create a wallet on the Wallet screen, then press the hexagon on Mining. Pool: `stratum+tcp://pool.saturn.boats:3333`. Stats: http://pool.saturn.boats:8081
 
             On a Mac the first launch needs right-click → Open, because the app isn't notarised yet.
           releaseDraft: false

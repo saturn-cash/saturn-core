@@ -503,8 +503,13 @@ footer a:hover { color: var(--secondary); }
   }
 
   /* ---------------- API ---------------- */
+  // Where the pool's API lives. Served by the pool itself it's the same origin; uploaded anywhere
+  // else (e.g. the main website) it calls the pool over HTTPS, with plain HTTP :8081 as a fallback
+  // for http:// pages.
+  const POOL = 'pool.saturn.boats';
   const bases = [''];
-  if (location.port !== '8081') bases.push(`${location.protocol}//${location.hostname || 'pool.saturn.boats'}:8081`);
+  if (location.hostname !== POOL || location.port) bases.push(`https://${POOL}`);
+  if (location.protocol === 'http:') bases.push(`http://${POOL}:8081`);
   let base = null;
   async function api(path) {
     for (const b of base != null ? [base] : bases) {

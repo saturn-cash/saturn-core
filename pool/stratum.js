@@ -552,7 +552,10 @@ let network = { hashrate: null, difficulty: null, blocks: null, updated: 0 };
 async function refreshNetwork() {
   try {
     const info = await rpc("getmininginfo");
-    network = { hashrate: info.networkhashps ?? null, difficulty: info.difficulty ?? null, blocks: info.blocks ?? null, updated: Date.now() };
+    // getmininginfo averages over 120 blocks, which still includes the very first easy blocks;
+    // the last 20 blocks are a truer picture of the network now
+    const recent = await rpc("getnetworkhashps", [20]).catch(() => null);
+    network = { hashrate: recent ?? info.networkhashps ?? null, difficulty: info.difficulty ?? null, blocks: info.blocks ?? null, updated: Date.now() };
   } catch (e) {
     console.error("getmininginfo failed:", e.message);
   }

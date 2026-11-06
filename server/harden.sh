@@ -319,7 +319,9 @@ After=saturn.service saturn-stratum.service
 
 [Service]
 User=saturnpay
-Group=saturnpool
+# its own group reads the passphrase file; saturnpool lets it share the pool's data folder
+Group=saturnpay
+SupplementaryGroups=saturnpool
 WorkingDirectory=$POOL_CODE
 Environment=SATURN_POOL_CONFIG=$POOL_ETC/config.json
 Environment=SATURN_PAYOUT_CONFIG=$POOL_ETC/payout.json

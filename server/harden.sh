@@ -387,10 +387,9 @@ EOF
   ln -sf /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/$DOMAIN
   nginx -t >/dev/null 2>&1 || die "nginx config test failed: nginx -t"
   systemctl reload nginx
-  if [ -d /etc/letsencrypt/live/$DOMAIN ]; then
-    ok "certificate already there"
-  elif certbot --nginx -d $DOMAIN --non-interactive --agree-tos --register-unsafely-without-email --redirect >/dev/null 2>&1; then
-    ok "HTTPS certificate issued (renews itself)"
+  # issues a certificate, or reuses the one already there, and wires HTTPS into the new site either way
+  if certbot --nginx -d $DOMAIN --non-interactive --agree-tos --register-unsafely-without-email --redirect --keep-until-expiring >/dev/null 2>&1; then
+    ok "HTTPS on for $DOMAIN (the certificate renews itself)"
   else
     warn "certbot couldn't get a certificate (is $DOMAIN pointing at this server and port 80 open?). HTTP still works; run again later"
   fi

@@ -792,11 +792,40 @@ footer a:hover { color: var(--secondary); }
     thumb.style.width = on.offsetWidth + 'px';
     thumb.style.transform = `translateX(${on.offsetLeft}px)`;
   }
-  const spy = new IntersectionObserver((entries) => {
-    for (const e of entries) if (e.isIntersecting) navLinks.forEach((a) => a.setAttribute('aria-current', String(a.dataset.nav === e.target.id)));
-    moveThumb();
-  }, { rootMargin: '-45% 0px -50% 0px' });
-  navLinks.forEach((a) => a.addEventListener('click', () => { navLinks.forEach((x) => x.setAttribute('aria-current', String(x === a))); moveThumb(); }));
+  // Which section you're in: the last one whose top has passed a line a third of the way down the
+  // screen, or the last section once you're at the bottom (it may be too short to reach the line).
+  const sectionIds = navLinks.map((a) => a.dataset.nav);
+  let lockId = null;   // a tab you clicked stays selected until you scroll yourself
+  function setCurrent(id) {
+    let changed = false;
+    navLinks.forEach((a) => { const on = String(a.dataset.nav === id); if (a.getAttribute('aria-current') !== on) { a.setAttribute('aria-current', on); changed = true; } });
+    if (changed) moveThumb();
+  }
+  function track() {
+    if (lockId) return setCurrent(lockId);
+    const line = innerHeight / 3;
+    let id = sectionIds[0];
+    for (const s of sectionIds) { const el = $(s); if (el && el.getBoundingClientRect().top <= line) id = s; }
+    if (innerHeight + scrollY >= document.documentElement.scrollHeight - 4) id = sectionIds[sectionIds.length - 1];
+    setCurrent(id);
+  }
+  let ticking = false;
+  addEventListener('scroll', () => { if (!ticking) { ticking = true; requestAnimationFrame(() => { ticking = false; track(); }); } }, { passive: true });
+  // a click jumps straight to its tab and holds it there while the page scrolls
+  navLinks.forEach((a) => a.addEventListener('click', (e) => {
+    const el = $(a.dataset.nav);
+    if (!el) return;
+    e.preventDefault();
+    lockId = a.dataset.nav;
+    setCurrent(lockId);
+    const top = a.dataset.nav === sectionIds[0] ? 0 : el.getBoundingClientRect().top + scrollY - 64;
+    scrollTo({ top, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    history.replaceState(null, '', '#' + a.dataset.nav);
+  }));
+  // your own scrolling (wheel, touch, keys, scrollbar) hands control back to the page position
+  const release = () => { if (lockId) { lockId = null; track(); } };
+  for (const ev of ['wheel', 'touchstart', 'keydown']) addEventListener(ev, release, { passive: true });
+  addEventListener('pointerdown', (e) => { if (!e.target.closest('[data-nav]')) release(); });
   addEventListener('resize', moveThumb);
 
   const reveal = new IntersectionObserver((entries) => {
@@ -804,8 +833,8 @@ footer a:hover { color: var(--secondary); }
   }, { threshold: 0.08, rootMargin: '0px 0px -6% 0px' });
   document.querySelectorAll('.reveal').forEach((el) => reveal.observe(el));
 
-  function endIntro() { moveThumb(); }
-  ['top', 'miners', 'blocks', 'start'].forEach((id) => spy.observe($(id)));
+  function endIntro() { track(); moveThumb(); }
+  track();
 
   /* ---------------- starfield ---------------- */
   const sky = $('sky'), sctx = sky.getContext('2d');

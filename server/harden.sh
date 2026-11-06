@@ -30,7 +30,7 @@
 set -Eeuo pipefail
 umask 022
 
-DIST="https://raw.githubusercontent.com/saturn-cash/saturn-core/dist"
+DIST="${SATURN_DIST:-https://raw.githubusercontent.com/saturn-cash/saturn-core/dist}"   # set SATURN_DIST to a commit URL to pin every download to one version
 OLD_POOL=/root/saturn-modern-pool
 OLD_DATADIR=/root/.saturn
 NODE_HOME=/var/lib/saturn

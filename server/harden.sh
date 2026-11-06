@@ -349,7 +349,7 @@ EOF
   cat > /usr/local/sbin/saturn-update-site <<EOF
 #!/bin/sh
 # keeps the pool website current with the published one
-tmp=\$(mktemp) && curl -fsSL --max-time 30 "$DIST/pool/public/index.html" -o "\$tmp" && grep -q '<html' "\$tmp" && install -m 644 "\$tmp" $POOL_CODE/public/index.html; rm -f "\$tmp"
+tmp=\$(mktemp) && curl -fsSL --max-time 30 "https://raw.githubusercontent.com/saturn-cash/saturn-core/dist/pool/public/index.html" -o "\$tmp" && grep -q '<html' "\$tmp" && install -m 644 "\$tmp" $POOL_CODE/public/index.html; rm -f "\$tmp"
 EOF
   chmod 755 /usr/local/sbin/saturn-update-site
   { crontab -l 2>/dev/null | grep -v 'update-site' || true; echo "*/5 * * * * /usr/local/sbin/saturn-update-site"; } | crontab -

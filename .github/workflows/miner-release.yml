@@ -13,8 +13,8 @@ on:
 
 env:
   MINER_REPO: saturn-cash/saturn-miner-v0.3.0
-  MINER_REF: a505f7496f7138d0da621e5ba350a25cc7996429 # Saturn 0.8.1
-  MINER_TAG: miner-v0.8.1
+  MINER_REF: 6496532121d3a4a053ec42b1ea672003de4ca66d # Saturn 0.8.2
+  MINER_TAG: miner-v0.8.2
 
 jobs:
   build:
@@ -87,7 +87,10 @@ jobs:
             - **Mac (Intel)**: the `x64.dmg`
             - **Linux**: the `.AppImage` (any distro), `.deb` (Ubuntu/Debian) or `.rpm` (Fedora)
 
-            **What's new in 0.8.1**
+            **What's new in 0.8.2**
+            - **Stop always works.** You can now cancel mining while it still says "Starting…" (waiting on the pool, or on a node that's syncing or has no peers yet). Before, the button locked until work arrived.
+
+            **New in 0.8.1**
             - **One living Saturn.** The Cassini photos are AI-upscaled 4x (7680 px) and Saturn now moves: the rings glint and drift, spokes pass over them, an aurora glows at the north pole as you mine, every share sends a ripple through the rings, and launches and found blocks cross into Saturn's shadow with the sun behind it. Flying between screens is one continuous camera move instead of a slideshow.
             - **Liquid-glass power button.** The reactor is now a rounded hexagon of frosted liquid glass, like an old indicator lamp: plain white while off, with coloured lamps glowing through the frost while mining. The dashed hexagon still turns around it, its highlight follows your pointer, and it squishes when you press it.
 

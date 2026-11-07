@@ -13,8 +13,8 @@ on:
 
 env:
   MINER_REPO: saturn-cash/saturn-miner-v0.3.0
-  MINER_REF: f3adbc82aa28c3002ea99ba7a3f08e70c2c3b563 # Saturn 0.8.6
-  MINER_TAG: miner-v0.8.6
+  MINER_REF: f335fff238a7d754c972cf91363f47c63b0b3199 # Saturn 0.8.7
+  MINER_TAG: miner-v0.8.7
 
 jobs:
   build:
@@ -87,7 +87,15 @@ jobs:
             - **Mac (Intel)**: the `x64.dmg`
             - **Linux**: the `.AppImage` (any distro), `.deb` (Ubuntu/Debian) or `.rpm` (Fedora)
 
-            **What's new in 0.8.6**
+            **What's new in 0.8.7**
+            - **Hologram power button.** The Saturn coin is the power button now: grey and still when off, it lights up green and starts spinning when you mine. There's a little power button next to it too, like the sound one.
+            - **Hologram flight map and peers radar** in the same green look.
+            - **Rings.** 1 SAT = 100,000,000 rings, the smallest piece of a SAT. Your wallet shows both.
+            - **Much lighter on your computer.** The space scene only runs at full speed while you mine or fly between screens, and slows right down in the background.
+            - **Bitaxe that moved?** If your Bitaxe gets a new address (after a restart or a Wi-Fi change), Saturn finds it on your network and follows it. Errors now say what's actually wrong.
+            - **Auto-update is built in.** From the next version on, Saturn tells you when an update is ready and installs it in one click, keeping your wallet and settings.
+
+            **New in 0.8.6**
             - **Start button polish.** The little lamps under the glass now glow faintly in colour even when you're not mining, and the hover shine sweeps across the whole button.
 
             **New in 0.8.5**
@@ -127,7 +135,7 @@ jobs:
             - Export your wallet to Saturn Core whenever you want to run a full node.
             - The app is now simply **Saturn**, with a new white icon and its own title bar on Windows and Linux.
 
-            **Start mining:** open Saturn, create a wallet on the Wallet screen, then press the hexagon on Mining. Pool: `stratum+tcp://pool.saturn.boats:3333`. Stats: http://pool.saturn.boats:8081
+            **Start mining:** open Saturn, create a wallet on the Wallet screen, then press the hexagon on Mining. Pool: `stratum+tcp://pool.saturn.boats:3333`. Stats: https://pool.saturn.boats
 
             On a Mac the first launch needs right-click → Open, because the app isn't notarised yet.
           releaseDraft: false

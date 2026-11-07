@@ -13,8 +13,8 @@ on:
 
 env:
   MINER_REPO: saturn-cash/saturn-miner-v0.3.0
-  MINER_REF: 6496532121d3a4a053ec42b1ea672003de4ca66d # Saturn 0.8.2
-  MINER_TAG: miner-v0.8.2
+  MINER_REF: 0009d0921239a8de82227d59c6c0ca82c3941e7c # Saturn 0.8.3
+  MINER_TAG: miner-v0.8.3
 
 jobs:
   build:
@@ -87,7 +87,10 @@ jobs:
             - **Mac (Intel)**: the `x64.dmg`
             - **Linux**: the `.AppImage` (any distro), `.deb` (Ubuntu/Debian) or `.rpm` (Fedora)
 
-            **What's new in 0.8.2**
+            **What's new in 0.8.3**
+            - **Quiet by default.** Sounds are off until you switch them on in Settings → Sound (the share ping and block celebration toggles are there too).
+
+            **New in 0.8.2**
             - **Stop always works.** You can now cancel mining while it still says "Starting…" (waiting on the pool, or on a node that's syncing or has no peers yet). Before, the button locked until work arrived.
 
             **New in 0.8.1**

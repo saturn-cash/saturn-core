@@ -269,6 +269,16 @@ footer a:hover { color: var(--secondary); }
 /* the real Saturn: Cassini's portrait (NASA/JPL-Caltech/SSI) with its black sky cut out so the stars show around it */
 #planet { aspect-ratio: 1920 / 981; }
 @media (min-width: 961px) { #planet { width: min(820px, 60vw); transform: translate(-20%, -46%); } }
+/* phones and tablets: like the main site, Saturn sits whole above the heading in full colour, with the stars around it */
+@media (max-width: 960px) {
+  #planet { width: 112vw; left: 50%; top: 0; transform: translate(-50%, 4%); }
+  #planet.ready { opacity: 1; }
+  .hero { padding-top: calc(112vw * 0.511 + 28px); }
+}
+@media (min-width: 601px) and (max-width: 960px) {
+  #planet { width: 92vw; }
+  .hero { padding-top: calc(92vw * 0.511 + 40px); }
+}
 #planet img { display: block; width: 100%; height: 100%; animation: saturn-float 18s ease-in-out infinite alternate; }
 @keyframes saturn-float { from { transform: translateY(-7px) rotate(-0.5deg); } to { transform: translateY(7px) rotate(0.5deg); } }
 
@@ -1417,8 +1427,8 @@ footer a:hover { color: var(--secondary); }
     const dpr = Math.min(2, devicePixelRatio || 1);
     sky.width = innerWidth * dpr; sky.height = innerHeight * dpr;
     sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const n = Math.round((innerWidth * innerHeight) / 4200);
-    stars = Array.from({ length: n }, () => ({ x: Math.random() * innerWidth, y: Math.random() * innerHeight, r: Math.random() ** 3 * 1.2 + 0.25, a: Math.random() * 0.55 + 0.15, t: Math.random() * 6.28, s: Math.random() * 0.8 + 0.2, d: Math.random() * 0.2 + 0.04 }));
+    const n = Math.round((innerWidth * innerHeight) / 2600); // a fuller sky, like the main site
+    stars = Array.from({ length: n }, () => ({ x: Math.random() * innerWidth, y: Math.random() * innerHeight, r: Math.random() ** 3 * 1.5 + 0.3, a: Math.random() * 0.6 + 0.25, t: Math.random() * 6.28, s: Math.random() * 0.8 + 0.2, d: Math.random() * 0.2 + 0.04 }));
   }
   function drawSky(time) {
     sctx.clearRect(0, 0, innerWidth, innerHeight);

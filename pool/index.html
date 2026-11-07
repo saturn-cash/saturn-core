@@ -138,6 +138,26 @@ tbody tr:hover { background: rgb(255 255 255 / 0.025); }
 .worker { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .avatar { width: 28px; height: 28px; flex: none; display: grid; place-items: center; font: 700 10.5px var(--display); color: #1c1206; }
 .avatar.off { background: rgb(255 255 255 / 0.12); color: rgb(235 235 245 / 0.6); }
+/* rings: SAT's smallest unit, with a calculator (Wallet section) */
+.rings-card { margin-top: 16px; display: grid; gap: 14px; }
+.rings-eq { display: flex; align-items: center; gap: 12px; }
+.rings-eq p { margin: 0; display: grid; gap: 3px; }
+.rings-eq b { font: 600 17px var(--display); color: rgb(160 255 200); text-shadow: 0 0 8px rgb(61 255 139 / 0.35); }
+.rings-eq span { font-size: 13px; color: var(--secondary); }
+.rings-mark { width: 26px; height: 26px; flex: none; }
+.rings-calc { display: grid; grid-template-columns: 1fr auto 1fr; align-items: end; gap: 10px; }
+.rings-calc label { display: grid; gap: 6px; font-size: 12px; color: var(--secondary); }
+.rings-calc .field { font-family: var(--mono); font-size: 15px; }
+.rings-swap { font: 600 18px var(--display); color: rgb(61 255 139); padding-bottom: 9px; }
+@media (max-width: 560px) { .rings-calc { grid-template-columns: 1fr; } .rings-swap { display: none; } }
+
+/* green hologram hexagons (worker badges, block markers, the heading mark), matching the Saturn coin */
+.holo-hex { background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpolygon points='27,6 73,6 96,50 73,94 27,94 4,50' fill='rgba%2861,255,139,0.08%29' stroke='%233dff8b' stroke-width='6' stroke-linejoin='round'/%3E%3C/svg%3E") center/100% 100% no-repeat; color: rgb(140 255 190); font-family: var(--mono) !important;
+  text-shadow: 0 0 6px rgb(61 255 139 / 0.6); filter: drop-shadow(0 0 3px rgb(61 255 139 / 0.55)); }
+.holo-hex.off { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpolygon points='27,6 73,6 96,50 73,94 27,94 4,50' fill='rgba%28255,255,255,0.03%29' stroke='%237d8290' stroke-width='6' stroke-linejoin='round'/%3E%3C/svg%3E"); color: rgb(235 235 245 / 0.55); text-shadow: none; filter: none; }
+.holo-hex.pulse { animation: holo-hex-pulse 2.4s ease-in-out infinite; }
+@keyframes holo-hex-pulse { 50% { filter: drop-shadow(0 0 6px rgb(61 255 139 / 0.85)); } }
+
 .who b { font-weight: 600; display: block; }
 .who span { font-family: var(--mono); font-size: 11.5px; color: var(--tertiary); }
 .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
@@ -332,8 +352,8 @@ footer a:hover { color: var(--secondary); }
 .mine-btn .glow { position: absolute; inset: -14px; border-radius: 50%; filter: blur(20px); opacity: 0; transition: opacity .6s; z-index: -1; }
 .mine-btn .ring { position: absolute; inset: -9px; border-radius: 50%; border: 1px dashed rgb(255 255 255 / 0.14); }
 .mining .mine-btn .glow { opacity: .85; }
-.mining .mine-btn .ring { animation: radar-spin 14s linear infinite; border-color: rgb(255 255 255 / 0.28); }
-.mining .mine-btn { background: radial-gradient(circle at 50% 38%, rgb(255 255 255 / 0.3), rgb(255 255 255 / 0.06) 62%), rgb(40 34 30 / 0.6); }
+.mining .mine-btn .ring { animation: radar-spin 14s linear infinite; border-color: rgb(61 255 139 / 0.5); }
+.mining .mine-btn { background: radial-gradient(circle at 50% 38%, rgb(160 255 200 / 0.28), rgb(61 255 139 / 0.06) 62%), rgb(10 30 18 / 0.6); color: rgb(200 255 222); }
 @keyframes radar-spin { to { transform: rotate(360deg); } }
 .mine-state { font: 600 15px var(--display); }
 .mine-state small { display: block; margin-top: 4px; font: 400 12.5px var(--sans); color: var(--secondary); }
@@ -419,7 +439,7 @@ footer a:hover { color: var(--secondary); }
     <div class="hero">
       <div class="hero-copy rise">
         <a class="announce" href="#mine" data-goto="mine"><b>New</b>Mine from any device, right in your browser <span aria-hidden="true">→</span></a>
-        <span class="eyebrow"><span class="hexmark hex spectrum-fill"></span>Saturn mainnet · SHA-256d</span>
+        <span class="eyebrow"><span class="hexmark holo-hex"></span>Saturn mainnet · SHA-256d</span>
         <h1>Mine Saturn together.</h1>
         <div class="big"><span id="hr-num" class="roll">0.00</span><span class="unit" id="hr-unit">TH/s</span></div>
         <div class="caption">Pool hashrate, last 10 minutes</div>
@@ -494,6 +514,15 @@ footer a:hover { color: var(--secondary); }
         <p class="note">Wallets are made on your device: the 12 recovery words never leave it, and this page never stores them. The same words open the same wallet in the Saturn app, which is where you send SAT. Loading an address only reads it.</p>
         <div id="w-out" aria-live="polite"></div>
       </div>
+      <div class="glass card reveal rings-card" style="--d:.06s">
+        <div class="rings-eq"><span class="holo-hex rings-mark" aria-hidden="true"></span><p><b>1 SAT = 100,000,000 rings</b><span>A ring is the smallest piece of a SAT, like a satoshi is for Bitcoin. 1 ring = 0.00000001 SAT.</span></p></div>
+        <div class="rings-calc" role="group" aria-label="SAT and rings calculator">
+          <label>SAT<input class="field" id="rc-sat" inputmode="decimal" autocomplete="off" spellcheck="false" value="1"></label>
+          <span class="rings-swap" aria-hidden="true">=</span>
+          <label>rings<input class="field" id="rc-rings" inputmode="numeric" autocomplete="off" spellcheck="false" value="100,000,000"></label>
+        </div>
+        <p class="note" id="rc-note">Type in either box to convert.</p>
+      </div>
     </section>
 
     <section id="mine">
@@ -501,7 +530,7 @@ footer a:hover { color: var(--secondary); }
       <div class="mine-grid">
         <div class="glass card mine-ctl reveal" id="mine-card">
           <button class="mine-btn" type="button" id="mine-go" aria-pressed="false" aria-label="Start mining">
-            <span class="glow spectrum-fill" aria-hidden="true"></span><span class="ring" aria-hidden="true"></span>
+            <span class="glow" aria-hidden="true" style="background:radial-gradient(closest-side,rgb(61 255 139 / .75),rgb(61 255 139 / .2) 60%,transparent)"></span><span class="ring" aria-hidden="true"></span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 3v8"/><path d="M6.4 6.6a8 8 0 1 0 11.2 0"/></svg>
           </button>
           <div class="mine-state" id="mine-state">Ready<small id="mine-sub">Paste the address you want paid, then tap the button.</small></div>
@@ -944,7 +973,7 @@ const SatWallet = (() => {
       const lastShare = all.lastShare || rd.lastShare;
       const found = Math.max(all.shares || 0, m ? m.accepted : 0);
       return `<tr${anim} data-addr="${esc(addr)}" title="Open ${esc(short(addr))} in Wallet">
-        <td><div class="worker"><span class="avatar hex ${m ? 'spectrum-fill' : 'off'}">${esc(initials(name))}</span><span class="who"><b>${esc(name || 'default')}${(() => { const d = devicesOf(worker) || all.device; return d ? `<span class="browser-tag device-tag" title="${m ? 'Mining from' : 'Last mined from'}: ${esc(d)}">${esc(d)}</span>` : ''; })()}</b><span title="${esc(addr)}">${esc(short(addr))}</span></span></div></td>
+        <td><div class="worker"><span class="avatar holo-hex ${m ? 'pulse' : 'off'}">${esc(initials(name))}</span><span class="who"><b>${esc(name || 'default')}${(() => { const d = devicesOf(worker) || all.device; return d ? `<span class="browser-tag device-tag" title="${m ? 'Mining from' : 'Last mined from'}: ${esc(d)}">${esc(d)}</span>` : ''; })()}</b><span title="${esc(addr)}">${esc(short(addr))}</span></span></div></td>
         <td data-label="Status"><span class="status"><i class="dot ${m ? 'on' : ''}"></i>${m ? 'Online' : '<span class="dim">Offline</span>'}</span></td>
         <td class="n" data-label="Hashrate">${m ? (m.hashrate ? rate(m.hashrate) : '<span class="dim">measuring…</span>') : '<span class="dim">—</span>'}</td>
         <td class="n" data-label="Shares found"><span class="shares">${int(found)}</span></td>
@@ -976,7 +1005,7 @@ const SatWallet = (() => {
           const mature = conf >= 100;
           const finder = String(b.miner).split('.')[1] || short(String(b.miner));
           return `<div class="block${isNew ? ' row-in' : ''}" style="--d:${(bi * 0.05).toFixed(2)}s">
-            <span class="hexi hex spectrum-fill${isNew ? ' pop' : ''}" style="--d:${(bi * 0.05 + 0.1).toFixed(2)}s"></span>
+            <span class="hexi holo-hex${isNew ? ' pop' : ''}" style="--d:${(bi * 0.05 + 0.1).toFixed(2)}s"></span>
             <div class="meta" style="min-width:0"><div><b>Block ${int(b.height)}</b>${b.solo ? ' <span class="solo-tag" title="Mined solo: the whole reward went straight to the finder">solo</span>' : ''} <span class="dim">· ${esc(finder)} · ${ago(b.time)}</span></div><div class="hash" title="${esc(b.hash)}">${esc(b.hash)}</div></div>
             <div class="right"><div style="font-weight:600">${sat(b.reward)} SAT</div><div class="bar" title="${conf} of 100 confirmations"><i class="${mature ? 'done' : ''}" style="width:${Math.min(100, conf)}%"></i></div><div class="sub">${mature ? 'Mature' : `${conf}/100 confirmations`}</div></div>
           </div>`;
@@ -2155,6 +2184,39 @@ const frame = (now) => {
 const go = () => { cancelAnimationFrame(raf); raf = document.hidden ? 0 : requestAnimationFrame(frame); };
 document.addEventListener('visibilitychange', go);
 go();
+})();
+</script>
+<script>
+/* SAT <-> rings calculator: exact, done in whole rings with BigInt so nothing gets rounded */
+(function () {
+  const sat = document.getElementById('rc-sat'), rings = document.getElementById('rc-rings'), note = document.getElementById('rc-note');
+  if (!sat || !rings) return;
+  const group = (n) => n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const toRings = (txt) => {
+    const t = txt.replace(/[\s,_]/g, '');
+    const m = /^(\d*)(?:\.(\d*))?$/.exec(t);
+    if (!m || (!m[1] && !m[2])) return null;
+    const frac = m[2] || '';
+    if (frac.length > 8) return 'precise';
+    return BigInt(m[1] || '0') * 100000000n + BigInt((frac + '00000000').slice(0, 8));
+  };
+  const toSat = (r) => {
+    const whole = r / 100000000n, frac = (r % 100000000n).toString().padStart(8, '0').replace(/0+$/, '');
+    return group(whole) + (frac ? '.' + frac : '');
+  };
+  const say = (t, bad) => { note.textContent = t; note.style.color = bad ? 'var(--warn)' : ''; };
+  sat.addEventListener('input', () => {
+    const r = toRings(sat.value);
+    if (r === 'precise') return say('A SAT only goes 8 places after the dot (one ring).', true);
+    if (r === null) return say(sat.value.trim() ? 'Type a number, like 0.5' : 'Type in either box to convert.', !!sat.value.trim());
+    rings.value = group(r); say(r === 1n ? 'That is one single ring.' : r < 100000000n && r > 0n ? 'Less than one SAT.' : 'Type in either box to convert.');
+  });
+  rings.addEventListener('input', () => {
+    const t = rings.value.replace(/[\s,_]/g, '');
+    if (!/^\d+$/.test(t)) return say(t ? 'Rings are whole numbers: there is nothing smaller than a ring.' : 'Type in either box to convert.', !!t);
+    const r = BigInt(t);
+    sat.value = toSat(r); say(r === 1n ? 'That is one single ring.' : 'Type in either box to convert.');
+  });
 })();
 </script>
 </body>

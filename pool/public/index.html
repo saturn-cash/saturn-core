@@ -1959,7 +1959,7 @@ function drawCursorPlanet(o, cx, cy, s, spin) {
  * on at every whole COIN_PERIOD.
  */
 function drawCoin(ctx, w, t, opts = {}) {
-    const { style = 'hologram', beam: withBeam = true, energy = 1, fxT = t, glitches = true, weight = 1 } = typeof opts === 'string' ? { style: opts } : opts;
+    const { style = 'hologram', beam: withBeam = true, energy = 1, fxT = t, glitches = false, weight = 1 } = typeof opts === 'string' ? { style: opts } : opts;
     WT = weight;
     const main = ctx.canvas;
     const dpr = main.width / w;
@@ -2106,7 +2106,8 @@ function drawCoin(ctx, w, t, opts = {}) {
     tc.fillStyle = 'rgb(90,210,255)';
     tc.fillRect(0, 0, tint.width, tint.height);
     const glitch = glitches ? GLITCHES[style].find(([a, b]) => loop >= a && loop < b) : undefined;
-    const flicker = (0.93 + 0.04 * Math.sin(fx * TAU * 9) + 0.03 * Math.sin(fx * TAU * 31 + 1)) * (0.42 + 0.58 * Math.max(0, Math.min(1, energy)));
+    // a steady projection: just the faintest shimmer
+    const flicker = (0.97 + 0.03 * Math.sin(fx * TAU * 3)) * (0.42 + 0.58 * Math.max(0, Math.min(1, energy)));
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, main.width, main.height);

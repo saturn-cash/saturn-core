@@ -384,6 +384,12 @@ $( if [ -f /proc/net/if_inet6 ]; then echo "    listen [::]:80;"; fi )
 }
 EOF
   fi
+  # browser mining: the Mine tab's WebSocket (/ws) needs the Upgrade headers passed through; added in
+  # front of every "location / {" (certbot copies the block into the HTTPS server)
+  if ! grep -q "location /ws" /etc/nginx/sites-available/$DOMAIN; then
+    sed -i 's|^\(\s*\)location / {|\1location /ws {\n\1    proxy_pass http://127.0.0.1:8081;\n\1    proxy_http_version 1.1;\n\1    proxy_set_header Upgrade \$http_upgrade;\n\1    proxy_set_header Connection "upgrade";\n\1    proxy_set_header Host \$host;\n\1    proxy_set_header X-Real-IP \$remote_addr;\n\1    proxy_read_timeout 120s;\n\1}\n\1location / {|' /etc/nginx/sites-available/$DOMAIN
+    ok "browser mining (WebSocket at /ws) passed through nginx"
+  fi
   ln -sf /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/$DOMAIN
   nginx -t >/dev/null 2>&1 || die "nginx config test failed: nginx -t"
   systemctl reload nginx

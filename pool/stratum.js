@@ -45,6 +45,13 @@ const MIN_DIFF = config.minDifficulty || 1;
 const MAX_DIFF = config.maxDifficulty || 2 ** 32;
 const TARGET_SHARE_SECONDS = config.targetShareSeconds || 10;
 const RETARGET_SECONDS = 60;
+// browsers (the Mine tab on the pool site) hash a million times slower than a Bitaxe: they start and
+// may go much lower, so even a phone finds a share every few seconds
+const BROWSER_START_DIFF = Number(config.browserStartDifficulty ?? 1 / 16);
+const BROWSER_MIN_DIFF = Number(config.browserMinDifficulty ?? 1 / 1024);
+// only pages on these sites may open a browser-mining connection, so nobody can embed the miner on
+// their own site and quietly mine with their visitors' phones
+const WS_ORIGINS = config.wsOrigins || ["https://pool.saturn.boats", "https://saturn.boats", "https://www.saturn.boats"];
 
 // PPLNS window: this many blocks' worth of work (at the current block difficulty)
 const PPLNS_FACTOR = Number(config.pplnsFactor ?? 2);
@@ -518,13 +525,13 @@ function send(socket, obj) {
 
 // whole powers of two: ESP-Miner (Bitaxe) truncates set_difficulty to an integer, so a fractional
 // difficulty made it submit shares the pool then judged too easy
-function roundDiff(d) {
-  const clamped = Math.min(MAX_DIFF, Math.max(MIN_DIFF, d));
+function roundDiff(d, min = MIN_DIFF) {
+  const clamped = Math.min(MAX_DIFF, Math.max(min, d));
   return 2 ** Math.round(Math.log2(clamped));
 }
 
 function setDifficulty(c, d) {
-  c.difficulty = roundDiff(d);
+  c.difficulty = roundDiff(d, c.minDiff);
   send(c.socket, { id: null, method: "mining.set_difficulty", params: [c.difficulty] });
 }
 
@@ -567,7 +574,7 @@ function retarget(c) {
   c.windowStart = Date.now();
   c.windowShares = 0;
   if (factor > 0.8 && factor < 1.25) return;
-  const next = roundDiff(c.difficulty * factor);
+  const next = roundDiff(c.difficulty * factor, c.minDiff);
   if (next === c.difficulty) return;
   setDifficulty(c, next);
   // the new difficulty applies from the next job: this miner (only) gets the current work under a
@@ -697,8 +704,10 @@ async function scriptFor(address) {
 const ADDRESS_RE = new RegExp(`^${ADDRESS_PREFIX}1[02-9ac-hj-np-z]{8,87}$`);
 let refusedLogged = 0;
 
-const server = net.createServer((socket) => {
-  const ip = (socket.remoteAddress || "").replace(/^::ffff:/, "");
+const server = net.createServer((socket) => acceptMiner(socket, (socket.remoteAddress || "").replace(/^::ffff:/, "")));
+
+// one stratum connection: a TCP socket from a miner, or a browser's WebSocket (see WsSocket)
+function acceptMiner(socket, ip, browser = false) {
   const banned = bans.get(ip);
   if (banned && banned > Date.now()) return socket.destroy();
   if (banned) bans.delete(ip);
@@ -713,7 +722,9 @@ const server = net.createServer((socket) => {
     socket,
     ip,
     extranonce1: (nextExtranonce1++ >>> 0).toString(16).padStart(8, "0").slice(-8),
-    difficulty: START_DIFF,
+    browser,
+    minDiff: browser ? BROWSER_MIN_DIFF : MIN_DIFF,
+    difficulty: browser ? BROWSER_START_DIFF : START_DIFF,
     versionMask: 0,
     authorized: false,
     worker: null,
@@ -759,7 +770,94 @@ const server = net.createServer((socket) => {
     if (c.authorized || clients.size < 200) console.log(`miner disconnected (${c.worker || "unauthorized"}: ${c.accepted} accepted, ${c.rejected} rejected), miners: ${clients.size}`);
   });
   socket.on("error", () => {});
-});
+}
+
+/* ------------------------------------------------------------------ */
+/* browser mining: stratum over WebSocket                              */
+/* ------------------------------------------------------------------ */
+
+// Browsers can't open a raw TCP connection to port 3333, so the Mine tab speaks the same stratum
+// messages over a WebSocket at /ws (through nginx on the HTTPS site). Each WebSocket text message is
+// one stratum line. This is a small, strict RFC 6455 server: text, ping/pong and close frames only,
+// client frames must be masked, and no message may exceed MAX_LINE.
+const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const { EventEmitter } = require("events");
+class WsSocket extends EventEmitter {
+  constructor(raw, ip) {
+    super();
+    this.raw = raw;
+    this.remoteAddress = ip;
+    this.buf = Buffer.alloc(0);
+    this.parts = [];
+    raw.on("data", (d) => this.onData(d));
+    raw.on("close", () => { clearInterval(this.pinger); this.emit("close"); });
+    raw.on("error", (e) => this.emit("error", e));
+    // nginx drops quiet connections; a ping every 25 s keeps phones connected between shares
+    this.pinger = setInterval(() => this.frame(0x9, Buffer.alloc(0)), 25_000);
+  }
+  get destroyed() { return this.raw.destroyed; }
+  get writable() { return this.raw.writable; }
+  setEncoding() {}
+  setKeepAlive(...a) { this.raw.setKeepAlive(...a); }
+  setNoDelay(...a) { this.raw.setNoDelay(...a); }
+  setTimeout(ms, cb) { this.raw.setTimeout(ms, cb); }
+  destroy() { clearInterval(this.pinger); this.raw.destroy(); }
+  frame(op, payload) {
+    if (this.raw.destroyed || !this.raw.writable) return;
+    const n = payload.length;
+    const head = n < 126 ? Buffer.from([0x80 | op, n]) : Buffer.from([0x80 | op, 126, n >> 8, n & 255]);
+    this.raw.write(Buffer.concat([head, payload]));
+  }
+  // stratum code writes newline-terminated JSON; each line becomes one text message
+  write(text) {
+    for (const line of String(text).split("\n")) if (line) this.frame(0x1, Buffer.from(line, "utf8"));
+    return true;
+  }
+  onData(d) {
+    this.buf = Buffer.concat([this.buf, d]);
+    while (this.buf.length >= 2) {
+      const b0 = this.buf[0], b1 = this.buf[1];
+      const fin = b0 & 0x80, op = b0 & 0x0f, masked = b1 & 0x80;
+      let len = b1 & 0x7f, off = 2;
+      if (!masked) return this.destroy(); // browsers always mask; anything else isn't a browser
+      if (len === 126) { if (this.buf.length < 4) return; len = this.buf.readUInt16BE(2); off = 4; }
+      else if (len === 127) return this.destroy(); // no stratum message is anywhere near 64 KB
+      if (len > MAX_LINE) return this.destroy();
+      if (this.buf.length < off + 4 + len) return;
+      const mask = this.buf.subarray(off, off + 4);
+      const payload = Buffer.from(this.buf.subarray(off + 4, off + 4 + len));
+      for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3];
+      this.buf = this.buf.subarray(off + 4 + len);
+      if (op === 0x8) { this.frame(0x8, Buffer.alloc(0)); return this.destroy(); }
+      if (op === 0x9) { this.frame(0xa, payload); continue; }
+      if (op === 0xa) continue;
+      if (op !== 0x0 && op !== 0x1) return this.destroy(); // binary isn't stratum
+      this.parts.push(payload);
+      if (this.parts.reduce((a, p) => a + p.length, 0) > MAX_LINE) return this.destroy();
+      if (fin) {
+        const text = Buffer.concat(this.parts).toString("utf8");
+        this.parts = [];
+        this.emit("data", text.replace(/\n/g, " ") + "\n");
+      }
+    }
+  }
+}
+
+function handleUpgrade(req, raw) {
+  const ip = clientIp(req);
+  const origin = String(req.headers.origin || "");
+  const key = req.headers["sec-websocket-key"];
+  const urlPath = (req.url || "").split("?")[0];
+  const allowed = WS_ORIGINS.includes(origin) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+  if (urlPath !== "/ws" || String(req.headers.upgrade || "").toLowerCase() !== "websocket" || !key || !allowed) {
+    raw.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+    return;
+  }
+  const accept = crypto.createHash("sha1").update(key + WS_GUID).digest("base64");
+  raw.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+  raw.setNoDelay(true);
+  acceptMiner(new WsSocket(raw, ip), ip, true);
+}
 
 async function handleLine(c, line) {
   const socket = c.socket;
@@ -965,7 +1063,7 @@ function statsBody() {
     miners: db.stats.miners || {},
     workers: db.workers,
     blocks: db.blocks,
-    connected: live.map((c) => ({ worker: c.worker, solo: !!c.soloScript, difficulty: c.difficulty, accepted: c.accepted, rejected: c.rejected, hashrate: liveHashrate(c), since: new Date(c.since).toISOString() })),
+    connected: live.map((c) => ({ worker: c.worker, solo: !!c.soloScript, browser: !!c.browser, difficulty: c.difficulty, accepted: c.accepted, rejected: c.rejected, hashrate: liveHashrate(c), since: new Date(c.since).toISOString() })),
     hashrate: live.reduce((a, c) => a + liveHashrate(c), 0),
     height: template?.height ?? null,
     // difficulty of the block being mined now (getmininginfo reports the tip's)
@@ -1075,10 +1173,12 @@ const LISTEN_HOST = config.listenHost || "0.0.0.0";
 const statsServer = http.createServer(handleHttp);
 statsServer.requestTimeout = 30_000;
 statsServer.headersTimeout = 15_000;
+statsServer.on("upgrade", handleUpgrade);
 // optional second port for the website (e.g. 80), same pages and API
 if (config.sitePort) {
   const site = http.createServer(handleHttp);
   site.requestTimeout = 30_000;
+  site.on("upgrade", handleUpgrade);
   site.listen(config.sitePort, LISTEN_HOST, () => console.log(`Saturn pool website listening on ${config.sitePort}`)).on("error", (e) => console.error(`website port ${config.sitePort}:`, e.message));
 }
 

@@ -1123,6 +1123,173 @@ function statsBody() {
   return body;
 }
 
+/*
+ * Coin / logo design submissions from saturn.boats ("Design the Saturn coin"). The page shrinks and
+ * re-encodes the picture in the browser, so what arrives is a plain PNG/JPEG/WebP under 500 KB; it's
+ * checked again here by its first bytes (never trusted by its name or type), saved privately in
+ * <dataDir>/designs with a line in designs/index.json, and never served back to anyone. Limits: a
+ * few per person per hour, and a cap on how many and how much in total.
+ */
+const DESIGNS = dataFile("designs");
+const DESIGN_MAX_BYTES = 500_000;
+const DESIGN_MAX_FILES = Number(config.designMaxFiles ?? 500);
+const DESIGN_MAX_TOTAL = Number(config.designMaxTotalBytes ?? 200_000_000);
+const DESIGN_PER_HOUR = 4;
+const designHits = new Map(); // ip -> [times]
+const designOrigin = (req) => {
+  const o = String(req.headers.origin || "");
+  return WS_ORIGINS.includes(o) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(o) ? o : "";
+};
+function imageKind(buf) {
+  if (buf.length > 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "png";
+  if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "jpg";
+  if (buf.length > 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "webp";
+  return null;
+}
+const cleanText = (v, max) => {
+  let t = "";
+  try {
+    t = decodeURIComponent(String(v || ""));
+  } catch {
+    t = String(v || "");
+  }
+  return t.replace(/[\u0000-\u001f\u007f<>]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+};
+function handleDesign(req, res) {
+  const origin = designOrigin(req);
+  res.setHeader("Content-Type", "application/json");
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
+  if (req.method === "OPTIONS") {
+    res.setHeader("Access-Control-Allow-Methods", "POST");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Design-Name, X-Design-Contact, X-Design-Note");
+    res.setHeader("Access-Control-Max-Age", "600");
+    res.statusCode = origin ? 204 : 403;
+    return res.end();
+  }
+  const fail = (code, error) => {
+    res.statusCode = code;
+    res.end(JSON.stringify({ error }));
+  };
+  if (req.method !== "POST") return fail(405, "POST a picture");
+  if (!origin) return fail(403, "submit from saturn.boats");
+  const ip = clientIp(req);
+  const now = Date.now();
+  const recent = (designHits.get(ip) || []).filter((t) => now - t < 3600_000);
+  if (recent.length >= DESIGN_PER_HOUR) return fail(429, "That's a few already this hour, thanks! Try again later.");
+  const chunks = [];
+  let size = 0;
+  let tooBig = false;
+  req.on("data", (d) => {
+    size += d.length;
+    if (size > DESIGN_MAX_BYTES) {
+      tooBig = true;
+      req.destroy();
+    } else chunks.push(d);
+  });
+  req.on("end", () => {
+    if (tooBig) return;
+    const buf = Buffer.concat(chunks);
+    const kind = imageKind(buf);
+    if (!kind) return fail(415, "send a PNG, JPEG or WebP picture");
+    try {
+      fs.mkdirSync(DESIGNS, { recursive: true, mode: 0o750 });
+      const indexFile = path.join(DESIGNS, "index.json");
+      const index = readJson(indexFile, []);
+      const total = index.reduce((t, e) => t + (e.bytes || 0), 0);
+      if (index.length >= DESIGN_MAX_FILES || total + buf.length > DESIGN_MAX_TOTAL) return fail(507, "Submissions are full right now, thanks for trying!");
+      const stamp = new Date(now).toISOString().replace(/[:.]/g, "-");
+      const file = `${stamp}-${crypto.randomBytes(3).toString("hex")}.${kind}`;
+      fs.writeFileSync(path.join(DESIGNS, file), buf, { mode: 0o640 });
+      index.push({
+        file,
+        time: new Date(now).toISOString(),
+        bytes: buf.length,
+        name: cleanText(req.headers["x-design-name"], 60),
+        contact: cleanText(req.headers["x-design-contact"], 120),
+        note: cleanText(req.headers["x-design-note"], 500),
+        from: crypto.createHash("sha256").update(ip + "saturn-designs").digest("hex").slice(0, 12),
+      });
+      fs.writeFileSync(indexFile + ".tmp", JSON.stringify(index, null, 1));
+      fs.renameSync(indexFile + ".tmp", indexFile);
+      recent.push(now);
+      designHits.set(ip, recent);
+      console.log(`design submitted: ${file} (${buf.length} bytes)`);
+      res.end(JSON.stringify({ ok: true }));
+    } catch (e) {
+      console.log("design save failed:", e.message);
+      fail(500, "couldn't save it, try again later");
+    }
+  });
+}
+setInterval(() => {
+  const old = Date.now() - 3600_000;
+  for (const [ip, ts] of designHits) if (!ts.some((t) => t > old)) designHits.delete(ip);
+}, 600_000);
+
+/*
+ * The pool operator's private gallery of submissions: /designs/review?key=<key>. The key is made once
+ * and kept in <dataDir>/designs/review-key (readable only on the server); without it the gallery
+ * and the pictures answer 404, like they aren't there.
+ */
+function designKey() {
+  const f = path.join(DESIGNS, "review-key");
+  try {
+    return fs.readFileSync(f, "utf8").trim();
+  } catch {
+    fs.mkdirSync(DESIGNS, { recursive: true, mode: 0o750 });
+    const k = crypto.randomBytes(18).toString("base64url");
+    fs.writeFileSync(f, k + "\n", { mode: 0o600 });
+    console.log(`design review key created in ${f}`);
+    return k;
+  }
+}
+const REVIEW_KEY = designKey();
+function reviewAllowed(req) {
+  const k = new URL(req.url, "http://x").searchParams.get("key") || "";
+  const a = Buffer.from(k);
+  const b = Buffer.from(REVIEW_KEY);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+const escHtml = (t) => String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+function handleReview(req, res, parts) {
+  const notFound = () => {
+    res.statusCode = 404;
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({ error: "not found" }));
+  };
+  if (limited(req, "other") || req.method !== "GET" || !reviewAllowed(req)) return notFound();
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Robots-Tag", "noindex");
+  const index = readJson(path.join(DESIGNS, "index.json"), []);
+  if (parts[1] === "file" && parts[2]) {
+    const e = index.find((x) => x.file === parts[2]);
+    if (!e || !/^[\w.-]+\.(png|jpg|webp)$/.test(e.file)) return notFound();
+    res.setHeader("Content-Type", { png: "image/png", jpg: "image/jpeg", webp: "image/webp" }[e.file.split(".").pop()]);
+    res.setHeader("Content-Security-Policy", "default-src 'none'");
+    return res.end(fs.readFileSync(path.join(DESIGNS, e.file)));
+  }
+  const key = encodeURIComponent(REVIEW_KEY);
+  const cards = index
+    .slice()
+    .reverse()
+    .map(
+      (e) => `<figure><a href="/designs/file/${escHtml(e.file)}?key=${key}" target="_blank" rel="noreferrer"><img src="/designs/file/${escHtml(e.file)}?key=${key}" alt="" loading="lazy"></a>
+<figcaption><b>${escHtml(e.name || "anonymous")}</b>${e.contact ? ` · ${escHtml(e.contact)}` : ""}<span>${escHtml(new Date(e.time).toLocaleString("en-US", { timeZone: "America/Chicago" }))}</span>${e.note ? `<p>${escHtml(e.note)}</p>` : ""}</figcaption></figure>`,
+    )
+    .join("");
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'");
+  res.end(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Saturn coin submissions</title>
+<style>body{margin:0;background:#07090d;color:#e8e6df;font:15px/1.45 system-ui,sans-serif;padding:24px}h1{font-weight:600;font-size:22px;margin:0 0 4px}.sub{color:#8a8f99;margin:0 0 22px}
+main{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}figure{margin:0;background:#11141b;border:1px solid #232733;border-radius:12px;overflow:hidden}
+img{display:block;width:100%;aspect-ratio:1;object-fit:contain;background:repeating-conic-gradient(#171a22 0 25%,#12151c 0 50%) 0 0/20px 20px}figcaption{padding:10px 12px;font-size:13px;color:#b9bcc4}figcaption b{color:#fff}figcaption span{display:block;color:#6f7480;font-size:12px}figcaption p{margin:6px 0 0;color:#d6d3cb}</style></head>
+<body><h1>Saturn coin submissions</h1><p class="sub">${index.length} so far, newest first. Click one to open it full size. Keep this link private.</p><main>${cards || '<p class="sub">None yet.</p>'}</main></body></html>`);
+}
+
 function handleHttp(req, res) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   const urlPath = (req.url || "/").split("?")[0];
@@ -1137,6 +1304,8 @@ function handleHttp(req, res) {
       return res.end(fs.readFileSync(file));
     }
   }
+  if (urlPath === "/designs") return handleDesign(req, res);
+  if (urlPath.startsWith("/designs/")) return handleReview(req, res, urlPath.split("/").filter(Boolean));
   res.setHeader("Content-Type", "application/json");
   res.setHeader("Access-Control-Allow-Origin", "*");
   const parts = urlPath.split("/").filter(Boolean);

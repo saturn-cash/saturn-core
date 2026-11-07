@@ -197,6 +197,7 @@ function addPplns(address, work) {
 function recordShare(worker, difficulty, solo = false) {
   const now = new Date().toISOString();
   const w = (db.workers[worker] = db.workers[worker] || { work: 0, shares: 0, blocks: 0, firstSeen: now });
+  if (!w.device) { const live = [...clients].find((x) => x.worker === worker && x.device); if (live) w.device = live.device; }
   w.work += difficulty;
   w.shares += 1;
   w.lastShare = now;
@@ -706,8 +707,45 @@ let refusedLogged = 0;
 
 const server = net.createServer((socket) => acceptMiner(socket, (socket.remoteAddress || "").replace(/^::ffff:/, "")));
 
+/*
+ * What kind of device a connection is, for the pool page ("Bitaxe Gamma", "Saturn app", "iPhone browser").
+ * Miners name their software in mining.subscribe (Bitaxe sends "bitaxe/BM1370/v2.4.1", the Saturn app
+ * "SaturnMiner/0.8.5"); a browser miner is described from its User-Agent header instead.
+ */
+const BITAXE_CHIPS = { BM1397: "Max", BM1366: "Ultra", BM1368: "Supra", BM1370: "Gamma" };
+function browserDevice(ua) {
+  ua = String(ua || "");
+  const where = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) || (/Macintosh/.test(ua) && /Mobile/.test(ua)) ? "iPad"
+    : /Android/.test(ua) ? (/Mobile/.test(ua) ? "Android phone" : "Android tablet") : /CrOS/.test(ua) ? "Chromebook"
+    : /Macintosh|Mac OS X/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows PC" : /Linux/.test(ua) ? "Linux PC" : "";
+  const app = /Edg\//.test(ua) ? "Edge" : /OPR\/|Opera/.test(ua) ? "Opera" : /Firefox\/|FxiOS/.test(ua) ? "Firefox"
+    : /CriOS|Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "";
+  return where ? `${where}${app ? ` · ${app}` : ""}` : app ? `${app} browser` : "Web browser";
+}
+function deviceName(c) {
+  if (c.browser) return browserDevice(c.userAgent);
+  const a = String(c.agent || "");
+  let m;
+  if ((m = a.match(/^SaturnMiner\/([\w.-]+)(?:\s*\(([^)]*)\))?/i))) return `Saturn app${m[2] ? ` · ${m[2]}` : ""}`;
+  if (/bitaxe|esp-?miner/i.test(a)) {
+    const chip = (a.match(/BM\d{4}/i) || [""])[0].toUpperCase();
+    return BITAXE_CHIPS[chip] ? `Bitaxe ${BITAXE_CHIPS[chip]}` : chip ? `Bitaxe (${chip})` : "Bitaxe";
+  }
+  if (/nerd\s*q?axe/i.test(a)) return /qaxe/i.test(a) ? "NerdQaxe" : "NerdAxe";
+  if (/nerd\s*miner/i.test(a)) return "NerdMiner";
+  if (/bmminer|antminer|cgminer.*bitmain/i.test(a)) return "Antminer";
+  if (/braiins|bosminer/i.test(a)) return "Braiins OS miner";
+  if (/whatsminer|btminer/i.test(a)) return "Whatsminer";
+  if (/avalon/i.test(a)) return "Avalon";
+  if (/^cgminer/i.test(a)) return "cgminer";
+  if (/^bfgminer/i.test(a)) return "BFGMiner";
+  if (/cpuminer|minerd/i.test(a)) return "cpuminer";
+  if (/nicehash/i.test(a)) return "NiceHash";
+  return a ? a.replace(/[^\w ./()+-]/g, "").slice(0, 32) : "Miner";
+}
+
 // one stratum connection: a TCP socket from a miner, or a browser's WebSocket (see WsSocket)
-function acceptMiner(socket, ip, browser = false) {
+function acceptMiner(socket, ip, browser = false, userAgent = "") {
   const banned = bans.get(ip);
   if (banned && banned > Date.now()) return socket.destroy();
   if (banned) bans.delete(ip);
@@ -723,6 +761,8 @@ function acceptMiner(socket, ip, browser = false) {
     ip,
     extranonce1: (nextExtranonce1++ >>> 0).toString(16).padStart(8, "0").slice(-8),
     browser,
+    userAgent: String(userAgent || "").slice(0, 300),
+    agent: "",
     minDiff: browser ? BROWSER_MIN_DIFF : MIN_DIFF,
     difficulty: browser ? BROWSER_START_DIFF : START_DIFF,
     versionMask: 0,
@@ -856,7 +896,7 @@ function handleUpgrade(req, raw) {
   const accept = crypto.createHash("sha1").update(key + WS_GUID).digest("base64");
   raw.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
   raw.setNoDelay(true);
-  acceptMiner(new WsSocket(raw, ip), ip, true);
+  acceptMiner(new WsSocket(raw, ip), ip, true, req.headers["user-agent"]);
 }
 
 async function handleLine(c, line) {
@@ -888,6 +928,7 @@ async function handleLine(c, line) {
         break;
       }
       case "mining.subscribe":
+        c.agent = String((Array.isArray(msg.params) && msg.params[0]) || "").slice(0, 80);
         send(socket, {
           id: msg.id,
           result: [[["mining.set_difficulty", c.extranonce1], ["mining.notify", c.extranonce1]], c.extranonce1, EXTRANONCE2_SIZE],
@@ -930,8 +971,10 @@ async function handleLine(c, line) {
         }
         c.worker = worker;
         c.authorized = true;
+        c.device = deviceName(c);
+        if (db.workers[worker] && db.workers[worker].device !== c.device) { db.workers[worker].device = c.device; save("workers"); }
         send(socket, { id: msg.id, result: true, error: null });
-        if (clients.size < 500) console.log(`authorized ${c.soloScript ? "SOLO " : ""}miner:`, worker, "extranonce1", c.extranonce1);
+        if (clients.size < 500) console.log(`authorized ${c.soloScript ? "SOLO " : ""}miner:`, worker, `(${c.device})`, "extranonce1", c.extranonce1);
         sendJob(c);
         break;
       }
@@ -1063,7 +1106,7 @@ function statsBody() {
     miners: db.stats.miners || {},
     workers: db.workers,
     blocks: db.blocks,
-    connected: live.map((c) => ({ worker: c.worker, solo: !!c.soloScript, browser: !!c.browser, difficulty: c.difficulty, accepted: c.accepted, rejected: c.rejected, hashrate: liveHashrate(c), since: new Date(c.since).toISOString() })),
+    connected: live.map((c) => ({ worker: c.worker, device: c.device || deviceName(c), solo: !!c.soloScript, browser: !!c.browser, difficulty: c.difficulty, accepted: c.accepted, rejected: c.rejected, hashrate: liveHashrate(c), since: new Date(c.since).toISOString() })),
     hashrate: live.reduce((a, c) => a + liveHashrate(c), 0),
     height: template?.height ?? null,
     // difficulty of the block being mined now (getmininginfo reports the tip's)

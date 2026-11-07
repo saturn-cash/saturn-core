@@ -350,6 +350,7 @@ footer a:hover { color: var(--secondary); }
 .share-pop { position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px; border-radius: 50%; background: var(--ok); pointer-events: none; animation: share-pop .9s ease-out forwards; }
 @keyframes share-pop { from { transform: scale(1); opacity: .9; } to { transform: scale(18); opacity: 0; } }
 .browser-tag { display: inline-block; font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 0 6px; border-radius: 999px; margin-left: 6px; color: #8d9fff; border: 1px solid rgb(141 159 255 / 0.45); vertical-align: 1px; }
+.device-tag { font-family: Inter, system-ui, sans-serif; text-transform: none; letter-spacing: 0; font-size: 11px; color: #fbe2b1; border-color: rgb(251 226 177 / 0.4); white-space: nowrap; }
 @media (max-width: 960px) { .mine-grid { grid-template-columns: 1fr; } .mine-kv { grid-template-columns: 1fr 1fr; } }
 
 /* "New: browser mining" banner in the hero */
@@ -924,6 +925,7 @@ const SatWallet = (() => {
 
   function renderMiners(s, online) {
     const live = new Map(online.map((m) => [m.worker, m]));
+    const devicesOf = (w) => { const d = online.filter((m) => m.worker === w).map((m) => m.device).filter(Boolean); const n = {}; d.forEach((x) => (n[x] = (n[x] || 0) + 1)); return Object.entries(n).map(([x, k]) => (k > 1 ? `${k} × ${x}` : x)).join(', '); };
     const workers = s.workers || {};
     const round = s.miners || {};
     const pend = s.pending || {};
@@ -940,7 +942,7 @@ const SatWallet = (() => {
       const lastShare = all.lastShare || rd.lastShare;
       const found = Math.max(all.shares || 0, m ? m.accepted : 0);
       return `<tr${anim} data-addr="${esc(addr)}" title="Open ${esc(short(addr))} in Wallet">
-        <td><div class="worker"><span class="avatar hex ${m ? 'spectrum-fill' : 'off'}">${esc(initials(name))}</span><span class="who"><b>${esc(name || 'default')}${m?.browser ? '<span class="browser-tag" title="Mining from a web browser">browser</span>' : ''}</b><span title="${esc(addr)}">${esc(short(addr))}</span></span></div></td>
+        <td><div class="worker"><span class="avatar hex ${m ? 'spectrum-fill' : 'off'}">${esc(initials(name))}</span><span class="who"><b>${esc(name || 'default')}${(() => { const d = devicesOf(worker) || all.device; return d ? `<span class="browser-tag device-tag" title="${m ? 'Mining from' : 'Last mined from'}: ${esc(d)}">${esc(d)}</span>` : ''; })()}</b><span title="${esc(addr)}">${esc(short(addr))}</span></span></div></td>
         <td data-label="Status"><span class="status"><i class="dot ${m ? 'on' : ''}"></i>${m ? 'Online' : '<span class="dim">Offline</span>'}</span></td>
         <td class="n" data-label="Hashrate">${m ? (m.hashrate ? rate(m.hashrate) : '<span class="dim">measuring…</span>') : '<span class="dim">—</span>'}</td>
         <td class="n" data-label="Shares found"><span class="shares">${int(found)}</span></td>
@@ -1151,7 +1153,9 @@ const SatWallet = (() => {
           ${workers.length || live.length ? `<div class="rows">${[...new Set([...workers.map(([w]) => w), ...live.map((m) => m.worker)])].map((w) => {
               const m = liveBy.get(w), all = (s.workers || {})[w] || {};
               const name = String(w).split('.')[1] || 'default';
-              return `<div class="row"><span class="status" style="flex:1;min-width:0"><i class="dot ${m ? 'on' : ''}"></i><b style="margin-left:2px">${esc(name)}</b></span>
+              const devs = live.filter((x) => x.worker === w).map((x) => x.device).filter(Boolean);
+              const device = devs.length > 1 ? `${devs.length} devices: ${[...new Set(devs)].join(', ')}` : devs[0] || all.device || '';
+              return `<div class="row"><span class="status" style="flex:1;min-width:0"><i class="dot ${m ? 'on' : ''}"></i><b style="margin-left:2px">${esc(device || name)}</b>${device ? `<span class="sub2" style="margin-left:6px">${esc(name)}</span>` : ''}</span>
                 <span class="sub2" style="white-space:nowrap">${m ? (m.hashrate ? rate(m.hashrate) : 'measuring…') : (all.lastShare ? 'last share ' + ago(all.lastShare) : 'offline')} · ${int(Math.max(all.shares || 0, m ? m.accepted : 0))} shares</span></div>`;
             }).join('')}</div>`
             : '<div class="empty" style="text-align:left">Not mining on this pool.</div>'}

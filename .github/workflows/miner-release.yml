@@ -13,8 +13,8 @@ on:
 
 env:
   MINER_REPO: saturn-cash/saturn-miner-v0.3.0
-  MINER_REF: 7db49537f9bc5a4d531174776c46134b24d522b5 # Saturn 0.8.4
-  MINER_TAG: miner-v0.8.4
+  MINER_REF: a5bbad2f93ba43b56aafb9f95ee5035723fb38e3 # Saturn 0.8.5
+  MINER_TAG: miner-v0.8.5
 
 jobs:
   build:
@@ -87,7 +87,11 @@ jobs:
             - **Mac (Intel)**: the `x64.dmg`
             - **Linux**: the `.AppImage` (any distro), `.deb` (Ubuntu/Debian) or `.rpm` (Fedora)
 
-            **What's new in 0.8.4**
+            **What's new in 0.8.5**
+            - **New start button.** Clear Windows Vista-style glass with little lamps under it: you can see the bulbs through the glass when it's off, and they light up in colour when you're mining. Hover for the Aero-blue glow.
+            - **New icon.** The Saturn silhouette from saturn.boats, on a yellow tile, for the app, taskbar and dock, plus the boot screen.
+
+            **New in 0.8.4**
             - **Saturn atmosphere switch.** The constant space drone, engine hum and solar wind are now their own switch in Settings, and they're off unless you turn them on. Share pings, block bells and warp sounds stay on the speaker button in the header.
 
             **New in 0.8.2**

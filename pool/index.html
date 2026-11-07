@@ -49,6 +49,8 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .toolbar { position: sticky; top: 0; z-index: 30; height: 52px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; padding: 0 20px; background: rgb(22 22 24 / 0.7); backdrop-filter: blur(30px) saturate(180%); box-shadow: 0 0.5px 0 rgb(255 255 255 / 0.08), 0 1px 0 rgb(0 0 0 / 0.5); }
 .brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .brand svg { width: 40px; height: 16px; color: #fbe2b1; flex: none; }
+/* the spinning Saturn hologram coin (coin-spin.ts from saturn.boats) */
+.brand-coin { width: 42px; height: 42px; flex: none; margin: -8px -4px -8px -6px; filter: drop-shadow(0 0 2px rgba(61,255,139,.9)) drop-shadow(0 0 7px rgba(61,255,139,.45)); }
 .brand b { font: 600 14px/1 var(--display); letter-spacing: -0.01em; }
 .toolbar-end { display: flex; justify-content: flex-end; align-items: center; gap: 10px; }
 .segmented { display: inline-flex; padding: 2px; gap: 2px; border-radius: 7px; background: rgb(255 255 255 / 0.07); box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 0.06); }
@@ -388,7 +390,7 @@ footer a:hover { color: var(--secondary); }
 <div class="page">
   <header class="toolbar">
     <a class="brand" href="#top" aria-label="Saturn Pool">
-      <svg viewBox="0 0 1558 636" aria-hidden="true" fill="currentColor"><path fill-rule="evenodd" d="M0,297 L4,321 L14,337 L16,337 L18,331 L34,318 L58,307 L93,296 L97,293 L118,290 L134,285 L142,285 L152,281 L165,280 L167,278 L192,274 L200,271 L213,271 L215,269 L228,268 L231,266 L238,266 L252,262 L321,251 L376,245 L404,240 L417,240 L439,232 L448,232 L462,226 L474,225 L475,232 L467,264 L463,306 L459,309 L458,316 L454,318 L454,328 L451,329 L450,368 L445,369 L445,376 L448,380 L448,386 L450,389 L449,400 L369,398 L354,396 L337,397 L332,395 L309,396 L195,389 L126,381 L68,370 L45,362 L42,362 L42,364 L62,378 L87,392 L130,411 L157,420 L158,422 L167,423 L200,434 L250,447 L358,469 L470,484 L500,486 L500,477 L505,476 L534,518 L566,552 L593,574 L624,594 L669,615 L709,627 L753,634 L792,635 L825,632 L864,624 L902,611 L935,595 L965,576 L976,567 L981,567 L981,564 L1012,535 L1017,535 L1017,532 L1022,525 L1028,525 L1029,519 L1032,519 L1036,513 L1043,511 L1043,506 L1045,504 L1052,503 L1053,497 L1061,495 L1062,490 L1085,488 L1086,486 L1101,486 L1101,483 L1108,479 L1125,478 L1204,466 L1304,446 L1375,427 L1424,410 L1446,400 L1454,399 L1456,396 L1478,386 L1497,374 L1501,374 L1501,372 L1524,357 L1524,355 L1540,339 L1551,323 L1557,303 L1557,290 L1553,275 L1547,263 L1535,248 L1513,230 L1509,224 L1501,222 L1484,211 L1460,199 L1411,179 L1335,156 L1266,140 L1224,133 L1223,131 L1213,131 L1175,124 L1114,116 L1053,110 L1010,70 L974,45 L960,38 L958,34 L950,33 L915,15 L893,8 L882,9 L874,13 L869,13 L849,7 L812,1 L762,0 L733,3 L707,8 L651,27 L625,40 L591,62 L570,79 L542,108 L508,110 L501,112 L428,119 L296,141 L201,164 L140,184 L101,201 L93,202 L92,205 L71,215 L44,232 L26,247 L14,261 L6,274Z M478,432 L485,433 L501,468 L500,473 L494,473 L490,470 L490,466 L483,456 L482,449 L479,448 L477,443Z M1123,237 L1140,242 L1142,246 L1155,248 L1174,258 L1193,274 L1201,284 L1204,293 L1204,307 L1200,317 L1193,326 L1173,342 L1149,354 L1141,353 L1141,337 L1144,336 L1144,297 L1141,296 L1141,273 L1139,272 L1139,264 L1133,260 L1133,251 L1129,251 L1127,246 L1122,244Z"/></svg>
+      <canvas class="brand-coin" id="brand-coin" width="84" height="84" aria-hidden="true"></canvas>
       <b>Saturn Pool</b>
     </a>
     <nav class="segmented slide" aria-label="Sections"><span class="thumb" aria-hidden="true"></span>
@@ -1733,6 +1735,426 @@ const SatWallet = (() => {
   setInterval(refresh, 5000);
   setInterval(refreshHistory, 60000);
   setInterval(drawChart, 30000);
+})();
+</script>
+<script>
+/* the header's spinning Saturn coin: the same hologram as saturn.boats and the app's power button */
+(function () {
+const G = '61,255,139';
+const R = 46; // hexagon vertex radius, in coin units (the canvas is 112 units wide)
+const CORNER = 7;
+const T = 7.5; // thickness
+const D = 320; // camera distance, for a little perspective
+const COIN_PERIOD = 6; // s: the coin turns once, the planet twice the other way
+const COIN_ASPECT = 1.3; // canvas height / width
+const TAU = Math.PI * 2;
+const outline = [];
+const ridges = [];
+(() => {
+    const v = [0, 60, 120, 180, 240, 300].map((a) => [R * Math.cos((a * Math.PI) / 180), R * Math.sin((a * Math.PI) / 180)]);
+    const toward = (a, b) => {
+        const t = CORNER / Math.hypot(b[0] - a[0], b[1] - a[1]);
+        return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+    };
+    for (let i = 0; i < 6; i++) {
+        const p = v[i];
+        const a = toward(p, v[(i + 5) % 6]);
+        const b = toward(p, v[(i + 1) % 6]);
+        for (let s = 0; s <= 8; s++) {
+            const u = s / 8;
+            outline.push([(1 - u) ** 2 * a[0] + 2 * (1 - u) * u * p[0] + u * u * b[0], (1 - u) ** 2 * a[1] + 2 * (1 - u) * u * p[1] + u * u * b[1]]);
+        }
+        const c = toward(v[(i + 1) % 6], p);
+        const ang = ((i * 60 + 30) * Math.PI) / 180;
+        for (const u of [0.3, 0.7])
+            ridges.push({ p: [b[0] + (c[0] - b[0]) * u, b[1] + (c[1] - b[1]) * u], n: [Math.cos(ang), Math.sin(ang)] });
+    }
+})();
+function hull(pts) {
+    const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const lo = [];
+    const up = [];
+    for (const q of p) {
+        while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], q) <= 0)
+            lo.pop();
+        lo.push(q);
+    }
+    for (let i = p.length - 1; i >= 0; i--) {
+        const q = p[i];
+        while (up.length >= 2 && cross(up[up.length - 2], up[up.length - 1], q) <= 0)
+            up.pop();
+        up.push(q);
+    }
+    up.pop();
+    lo.pop();
+    return lo.concat(up);
+}
+// minimal Saturn: outline, two rings, three lines of longitude, the equator
+const RINGS = [
+    [45, 12.5, 1.6, 1],
+    [33, 8.6, 1, 0.6],
+];
+const SPARKS = [
+    { ring: 0, a: 0.4, m: 1 },
+    { ring: 0, a: 3.4, m: 2 },
+    { ring: 1, a: 1.9, m: 1 },
+];
+// light rising up the beam: [x across the beam -1..1, phase, laps per loop]
+const MOTES = [
+    [-0.55, 0.05, 2], [0.2, 0.38, 3], [0.62, 0.71, 2], [-0.15, 0.55, 3], [0.4, 0.15, 1], [-0.75, 0.86, 2],
+];
+// glitches: [start, end] as fractions of the loop
+const GLITCHES = {
+    hologram: [
+        [0.415, 0.44],
+        [0.885, 0.9],
+    ],
+    // the flat cursor Saturn inside a 3D coin glitches more, like the projection can't quite hold it
+    cursor: [
+        [0.16, 0.175],
+        [0.415, 0.445],
+        [0.64, 0.652],
+        [0.885, 0.905],
+    ],
+};
+/** line weight multiplier for the current draw (thicker lines at small sizes) */
+let WT = 1;
+let off = null;
+let tint = null;
+function drawPlanet(o, cx, cy, s, spin, loop) {
+    o.save();
+    o.translate(cx, cy);
+    o.rotate((-20 * Math.PI) / 180);
+    o.scale(s, s);
+    const stroke = (alpha, width) => {
+        o.strokeStyle = `rgba(${G},${alpha})`;
+        o.lineWidth = width * WT;
+        o.stroke();
+    };
+    // rings: the far half is behind the planet, so dimmer
+    for (const [rx, ry, w, a] of RINGS) {
+        o.beginPath();
+        o.ellipse(0, 0, rx, ry, 0, Math.PI, TAU);
+        stroke(a * 0.35, w);
+    }
+    o.beginPath();
+    o.arc(0, 0, 19, 0, TAU);
+    o.fillStyle = `rgba(${G},.05)`;
+    o.fill();
+    o.save();
+    o.beginPath();
+    o.arc(0, 0, 19, 0, TAU);
+    o.clip();
+    o.beginPath();
+    o.ellipse(0, 0, 19, 3.4, 0, 0, Math.PI);
+    stroke(0.55, 0.95);
+    for (let j = 0; j < 6; j++) {
+        const lon = spin + (j * Math.PI) / 3;
+        const c = Math.cos(lon);
+        const sn = Math.sin(lon);
+        o.beginPath();
+        for (let q = 0; q <= 24; q++) {
+            const lat = -Math.PI / 2 + (q * Math.PI) / 24;
+            const x = 19 * Math.cos(lat) * sn;
+            const y = 19 * Math.sin(lat);
+            if (q)
+                o.lineTo(x, y);
+            else
+                o.moveTo(x, y);
+        }
+        stroke(c > 0 ? 0.15 + 0.7 * c : 0.07, 0.95);
+    }
+    o.restore();
+    o.beginPath();
+    o.arc(0, 0, 19, 0, TAU);
+    stroke(1, 1.6);
+    for (const [rx, ry, w, a] of RINGS) {
+        o.beginPath();
+        o.ellipse(0, 0, rx, ry, 0, 0, Math.PI);
+        stroke(a, w);
+    }
+    o.fillStyle = 'rgb(200,255,222)';
+    for (const sp of SPARKS) {
+        const [rx, ry] = RINGS[sp.ring];
+        const a = sp.a + loop * TAU * sp.m;
+        const x = rx * Math.cos(a);
+        const y = ry * Math.sin(a);
+        if (y < 0 && Math.abs(x) < 19.5)
+            continue;
+        o.beginPath();
+        o.arc(x, y, 1, 0, TAU);
+        o.fill();
+    }
+    o.restore();
+}
+/**
+ * The website cursor's Saturn exactly: flat, tilted, its lines of longitude drawn as ellipses that
+ * widen and narrow as it spins (`spin` radians), the far half of the rings hidden behind it.
+ */
+function drawCursorPlanet(o, cx, cy, s, spin) {
+    o.save();
+    o.translate(cx, cy);
+    o.rotate((-20 * Math.PI) / 180);
+    o.scale(s, s);
+    const stroke = (alpha, width) => {
+        o.strokeStyle = `rgba(${G},${alpha})`;
+        o.lineWidth = width * WT;
+        o.stroke();
+    };
+    o.setLineDash([2, 3.5]);
+    o.beginPath();
+    o.moveTo(0, -29);
+    o.lineTo(0, 29);
+    stroke(0.55, 1.6);
+    o.setLineDash([]);
+    const rings = [
+        [45, 12.5, 2.6, 1],
+        [32, 8, 1.8, 0.75],
+    ];
+    // the far half of the rings, except where the planet is in front of it
+    o.save();
+    o.beginPath();
+    o.rect(-60, -40, 120, 80);
+    o.arc(0, 0, 21, 0, TAU, true);
+    o.clip('evenodd');
+    for (const [rx, ry, w, a] of rings) {
+        o.beginPath();
+        o.ellipse(0, 0, rx, ry, 0, Math.PI, TAU);
+        stroke(a, w);
+    }
+    o.restore();
+    o.beginPath();
+    o.arc(0, 0, 19, 0, TAU);
+    stroke(1, 2.6);
+    o.save();
+    o.beginPath();
+    o.arc(0, 0, 19, 0, TAU);
+    o.clip();
+    for (const [x, y, ry] of [
+        [17, -8, 3],
+        [19, 1, 3.5],
+        [16, 10, 3],
+    ]) {
+        o.beginPath();
+        o.ellipse(0, y, x, ry, 0, 0, Math.PI);
+        stroke(0.7, 1.6);
+    }
+    for (let i = 0; i < 3; i++) {
+        const lon = spin + (i * Math.PI) / 3;
+        o.beginPath();
+        o.ellipse(0, 0, Math.max(0.01, Math.abs(Math.sin(lon)) * 19), 19, 0, 0, TAU);
+        stroke(0.25 + 0.6 * Math.max(0, Math.cos(lon)), 1.6);
+    }
+    o.restore();
+    for (const [rx, ry, w, a] of rings) {
+        o.beginPath();
+        o.ellipse(0, 0, rx, ry, 0, 0, Math.PI);
+        stroke(a, w);
+    }
+    o.restore();
+}
+/**
+ * Draw the hologram on a canvas `w` CSS pixels wide. `t` (s) is where the spin is: the coin is face
+ * on at every whole COIN_PERIOD.
+ */
+function drawCoin(ctx, w, t, opts = {}) {
+    const { style = 'hologram', beam: withBeam = true, energy = 1, fxT = t, glitches = false, weight = 1 } = typeof opts === 'string' ? { style: opts } : opts;
+    WT = weight;
+    const main = ctx.canvas;
+    const dpr = main.width / w;
+    if (!off || off.width !== main.width || off.height !== main.height) {
+        off = document.createElement('canvas');
+        tint = document.createElement('canvas');
+        off.width = tint.width = main.width;
+        off.height = tint.height = main.height;
+    }
+    const o = off.getContext('2d');
+    const h = main.height / dpr;
+    const k = withBeam ? w / 112 : Math.min(w, h) / 100;
+    const loop = (((t % COIN_PERIOD) + COIN_PERIOD) % COIN_PERIOD) / COIN_PERIOD;
+    const fx = (((fxT % COIN_PERIOD) + COIN_PERIOD) % COIN_PERIOD) / COIN_PERIOD;
+    o.setTransform(1, 0, 0, 1, 0, 0);
+    o.globalCompositeOperation = 'source-over';
+    o.clearRect(0, 0, off.width, off.height);
+    o.setTransform(dpr, 0, 0, dpr, 0, 0);
+    o.globalCompositeOperation = 'lighter';
+    o.lineJoin = 'round';
+    o.lineCap = 'round';
+    // the projector
+    const cx = w / 2;
+    const ey = h - 12 * k;
+    const bob = Math.sin(loop * TAU) * 1.6 * k;
+    const cy = withBeam ? 58 * k + bob : h / 2 + bob * 0.5;
+    if (withBeam) {
+        const glowE = o.createRadialGradient(cx, ey, 0, cx, ey, 22 * k);
+        glowE.addColorStop(0, `rgba(${G},.35)`);
+        glowE.addColorStop(1, `rgba(${G},0)`);
+        o.fillStyle = glowE;
+        o.fillRect(cx - 24 * k, ey - 10 * k, 48 * k, 20 * k);
+        o.beginPath();
+        o.ellipse(cx, ey, 15 * k, 3.4 * k, 0, 0, TAU);
+        o.strokeStyle = `rgba(${G},.95)`;
+        o.lineWidth = 1.3 * k * WT;
+        o.stroke();
+        o.beginPath();
+        o.ellipse(cx, ey, 7 * k, 1.6 * k, 0, 0, TAU);
+        o.strokeStyle = `rgba(${G},.55)`;
+        o.lineWidth = 0.8 * k * WT;
+        o.stroke();
+        // the beam, widening up towards the coin
+        const top = cy + 30 * k;
+        const beam = o.createLinearGradient(0, ey, 0, top - 30 * k);
+        beam.addColorStop(0, `rgba(${G},.2)`);
+        beam.addColorStop(0.6, `rgba(${G},.05)`);
+        beam.addColorStop(1, `rgba(${G},0)`);
+        o.beginPath();
+        o.moveTo(cx - 13 * k, ey);
+        o.lineTo(cx - 46 * k, top - 30 * k);
+        o.lineTo(cx + 46 * k, top - 30 * k);
+        o.lineTo(cx + 13 * k, ey);
+        o.closePath();
+        o.fillStyle = beam;
+        o.fill();
+        for (const [mx, ph, laps] of MOTES) {
+            const u = (loop * laps + ph) % 1; // 0 at the emitter, 1 at the coin
+            const y = ey - u * (ey - top);
+            const half = 13 * k + u * 30 * k;
+            o.beginPath();
+            o.arc(cx + mx * half, y, 0.75 * k, 0, TAU);
+            o.fillStyle = `rgba(200,255,222,${(Math.sin(u * Math.PI) * 0.8).toFixed(3)})`;
+            o.fill();
+        }
+    }
+    // the coin, see-through light
+    const th = loop * TAU;
+    const ph = ((16 + 6 * Math.sin(loop * TAU)) * Math.PI) / 180;
+    const cT = Math.cos(th);
+    const sT = Math.sin(th);
+    const cP = Math.cos(ph);
+    const sP = Math.sin(ph);
+    const proj = (x, y, z) => {
+        const x1 = x * cT + z * sT;
+        const z1 = -x * sT + z * cT;
+        const y2 = y * cP - z1 * sP;
+        const z2 = y * sP + z1 * cP;
+        const f = D / (D - z2);
+        return [cx + x1 * f * k, cy + y2 * f * k];
+    };
+    const front = outline.map(([x, y]) => proj(x, y, T / 2));
+    const back = outline.map(([x, y]) => proj(x, y, -T / 2));
+    const facingFront = cT * cP > 0;
+    const face = facingFront ? front : back;
+    const far = facingFront ? back : front;
+    const poly = (pts) => {
+        o.beginPath();
+        pts.forEach(([x, y], i) => (i ? o.lineTo(x, y) : o.moveTo(x, y)));
+        o.closePath();
+    };
+    poly(far);
+    o.strokeStyle = `rgba(${G},.13)`;
+    o.lineWidth = 0.9 * k * WT;
+    o.stroke();
+    poly(hull([...front, ...back]));
+    o.strokeStyle = `rgba(${G},.4)`;
+    o.lineWidth = 1 * k * WT;
+    o.stroke();
+    o.beginPath();
+    for (const r of ridges) {
+        if (r.n[1] * sP - r.n[0] * sT * cP <= 0.03)
+            continue;
+        const a = proj(r.p[0], r.p[1], T / 2 - 0.9);
+        const b = proj(r.p[0], r.p[1], -T / 2 + 0.9);
+        o.moveTo(a[0], a[1]);
+        o.lineTo(b[0], b[1]);
+    }
+    o.strokeStyle = `rgba(${G},.38)`;
+    o.lineWidth = 0.6 * k * WT;
+    o.stroke();
+    poly(face);
+    o.fillStyle = `rgba(${G},.045)`;
+    o.fill();
+    o.strokeStyle = `rgb(${G})`;
+    o.lineWidth = 1.7 * k * WT;
+    o.stroke();
+    if (style === 'cursor')
+        drawCursorPlanet(o, cx, cy, k * 0.6, loop * TAU * 1.5);
+    else
+        drawPlanet(o, cx, cy, k * 0.64, -loop * TAU * 2, loop);
+    // scanlines scrolling up through it, and a bright band sweeping up twice a loop
+    o.setTransform(1, 0, 0, 1, 0, 0);
+    o.globalCompositeOperation = 'destination-out';
+    o.fillStyle = 'rgba(0,0,0,.42)';
+    const step = 3 * dpr;
+    const shift = (fx * 20 * step) % step;
+    for (let y = -shift; y < off.height; y += step)
+        o.fillRect(0, y, off.width, dpr);
+    o.globalCompositeOperation = 'source-atop';
+    const by = off.height * (1.1 - 1.3 * ((fx * 2) % 1));
+    const band = o.createLinearGradient(0, by - 14 * dpr, 0, by + 14 * dpr);
+    band.addColorStop(0, 'rgba(255,255,255,0)');
+    band.addColorStop(0.5, 'rgba(220,255,235,.28)');
+    band.addColorStop(1, 'rgba(255,255,255,0)');
+    o.fillStyle = band;
+    o.fillRect(0, by - 14 * dpr, off.width, 28 * dpr);
+    // a cyan copy for the colour fringe
+    const tc = tint.getContext('2d');
+    tc.globalCompositeOperation = 'source-over';
+    tc.clearRect(0, 0, tint.width, tint.height);
+    tc.drawImage(off, 0, 0);
+    tc.globalCompositeOperation = 'source-in';
+    tc.fillStyle = 'rgb(90,210,255)';
+    tc.fillRect(0, 0, tint.width, tint.height);
+    const glitch = glitches ? GLITCHES[style].find(([a, b]) => loop >= a && loop < b) : undefined;
+    // a steady projection: just the faintest shimmer
+    const flicker = (0.97 + 0.03 * Math.sin(fx * TAU * 3)) * (0.42 + 0.58 * Math.max(0, Math.min(1, energy)));
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, main.width, main.height);
+    ctx.globalAlpha = (glitch ? 0.5 : 0.28) * flicker;
+    ctx.drawImage(tint, -(glitch ? 3.5 : 1) * dpr, 0);
+    ctx.globalAlpha = (glitch ? 0.75 : 1) * flicker;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.drawImage(off, 0, 0);
+    if (glitch) {
+        // a few slices of the picture jump sideways
+        const g = Math.floor(((loop - glitch[0]) / (glitch[1] - glitch[0])) * 3);
+        const slices = [
+            [0.24, 0.035, 5],
+            [0.39, 0.02, -7],
+            [0.46, 0.05, 4],
+            [0.63, 0.025, -5],
+        ];
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = flicker;
+        for (const [fy, fh, dx] of slices) {
+            const y = Math.round((fy + g * 0.04) * main.height);
+            const sh = Math.max(2, Math.round(fh * main.height));
+            ctx.clearRect(0, y, main.width, sh);
+            ctx.drawImage(off, 0, y, main.width, sh, dx * (g % 2 ? -1 : 1) * dpr, y, main.width, sh);
+        }
+    }
+    ctx.restore();
+}
+
+const c = document.getElementById('brand-coin');
+const ctx = c && c.getContext('2d');
+if (!ctx) return;
+const W = 42, dpr = Math.min(2, window.devicePixelRatio || 1);
+c.width = Math.round(W * dpr); c.height = Math.round(W * dpr);
+ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+const opts = { style: 'cursor', beam: false, weight: 2.1 };
+if (matchMedia('(prefers-reduced-motion: reduce)').matches) { drawCoin(ctx, W, 0.6, Object.assign({ glitches: false }, opts)); return; }
+const t0 = performance.now(); let raf = 0, lastDraw = 0;
+const frame = (now) => {
+  raf = requestAnimationFrame(frame);
+  if (now - lastDraw < 33) return; // 30 fps is plenty for a header icon
+  lastDraw = now;
+  drawCoin(ctx, W, (now - t0) / 1000, opts);
+};
+const go = () => { cancelAnimationFrame(raf); raf = document.hidden ? 0 : requestAnimationFrame(frame); };
+document.addEventListener('visibilitychange', go);
+go();
 })();
 </script>
 </body>

@@ -407,6 +407,11 @@ footer a:hover { color: var(--secondary); }
 .sheet .addr-big { margin: 14px 0 6px; padding: 12px; border-radius: 10px; background: rgb(255 255 255 / 0.06); font: 13.5px var(--mono); word-break: break-all; color: #fff; }
 @media (max-width: 600px) { .words { grid-template-columns: repeat(2, 1fr); } }
 
+.pend-when { display: block; margin-top: 2px; font-size: 11px; font-weight: 400; color: var(--tertiary); white-space: nowrap; }
+.pend-note { margin: 14px 4px 2px; max-width: 860px; }
+.pend-note b { color: var(--secondary); font-weight: 600; }
+.rows.owes { margin-top: 10px; }
+.rows.owes .row { justify-content: space-between; gap: 12px; }
 /* ---------------- block found ----------------
    When the pool as a whole finds a block (not a solo block, never for shares): green pings roll out
    of Saturn like the cursor's, then one tilted wave of light sweeps across the whole screen, the
@@ -603,6 +608,7 @@ footer a:hover { color: var(--secondary); }
           </table>
         </div>
         <div class="empty" id="miners-empty" hidden>No one has mined here yet. Be the first.</div>
+        <p class="note pend-note" id="pend-note"></p>
       </div>
     </section>
 
@@ -978,7 +984,31 @@ const SatWallet = (() => {
   const seenBlocks = new Set();
   const initials = (name) => ((name || 'w').replace(/[^a-z0-9]/gi, '').slice(0, 2) || 'W').toUpperCase();
 
+  // When each piece of an address's pending reward unlocks. Saturn (like Bitcoin) locks a block's
+  // reward until the chain is 100 blocks past it; then the pool pays it once it reaches the minimum.
+  function pendingParts(s, addr) {
+    const M = s.maturity || 100, tip = s.height ? s.height - 1 : null;
+    const piece = (h, v, approx) => ({ h, v, approx, at: h + M, left: tip != null ? Math.max(0, h + M - tip) : null });
+    const d = (s.pendingDetail || {})[addr];
+    if (d) return { owed: d.owed || 0, locked: (d.locked || []).map(([h, v]) => piece(h, v)).sort((a, b) => a.h - b.h) };
+    // a pool server without the per-address detail: the oldest block still unlocking is the soonest date
+    const v = (s.pending || {})[addr] || 0;
+    const imm = (s.rounds || []).filter((r) => r.status === 'immature').map((r) => r.height).sort((a, b) => a - b);
+    return v && imm.length ? { owed: 0, locked: [piece(imm[0], v, true)] } : { owed: v, locked: [] };
+  }
+  const blocksAway = (n) => n > 0 ? `${int(n)} more block${n === 1 ? '' : 's'}, about ${duration(n * 600)}` : 'unlocking now';
+  function pendingWhen(s, parts) {
+    const min = s.minPayout;
+    if (parts.locked.length) return { line: `unlocks at block ${int(parts.locked[0].at)}`, title: parts.locked.map((p) => `${sat(p.v)} SAT${p.approx ? '' : ` from block ${int(p.h)}`}: unlocks at block ${int(p.at)} (${blocksAway(p.left)})`).join('\n') + (parts.owed ? `\n${sat(parts.owed)} SAT already unlocked` : '') };
+    if (parts.owed) return min && parts.owed < min ? { line: `paid out at ${sat(min)} SAT`, title: `Unlocked. The pool pays once you're owed ${sat(min)} SAT.` } : { line: 'paying out', title: 'Unlocked: goes out in the next payout.' };
+    return { line: '', title: '' };
+  }
+
   function renderMiners(s, online) {
+    const lastPool = (s.blocks || []).find((b) => !b.solo), M = s.maturity || 100, min = s.minPayout || 1;
+    const ex = lastPool ? lastPool.height : (s.height || 222);
+    const away = s.height ? Math.max(0, ex + M - (s.height - 1)) : null;
+    $('pend-note').innerHTML = `<b>When does Pending get paid?</b> Pending is your share of the blocks the pool found, counted the moment a block is found. Saturn locks every block reward until the chain is ${M} blocks past it (the same rule as Bitcoin), and any miner's blocks move it along. So a share of block ${int(ex)} unlocks at block ${int(ex + M)}${away ? ` (${blocksAway(away)} from now)` : ''}. Then the pool sends it to your address automatically, once you're owed at least ${sat(min)} SAT. Hover a Pending amount to see each piece.`;
     const live = new Map(online.map((m) => [m.worker, m]));
     const devicesOf = (w) => { const d = online.filter((m) => m.worker === w).map((m) => m.device).filter(Boolean); const n = {}; d.forEach((x) => (n[x] = (n[x] || 0) + 1)); return Object.entries(n).map(([x, k]) => (k > 1 ? `${k} × ${x}` : x)).join(', '); };
     const workers = s.workers || {};
@@ -1010,7 +1040,7 @@ const SatWallet = (() => {
         <td class="n hide-sm">${m ? compact(m.difficulty) : '<span class="dim">—</span>'}</td>
         <td class="n hide-sm" title="Difficulty-weighted work since the last block">${compact(rd.shares || 0)}</td>
         <td class="n" data-label="Blocks">${int(all.blocks || 0)}</td>
-        <td class="n" data-label="Pending">${pend[addr] && !shownPending.has(addr) && shownPending.add(addr) ? `<b class="gold">${sat(pend[addr])}</b>` : '<span class="dim">0</span>'}</td>
+        <td class="n" data-label="Pending">${pend[addr] && !shownPending.has(addr) && shownPending.add(addr) ? (() => { const w = pendingWhen(s, pendingParts(s, addr)); return `<span title="${esc(w.title)}"><b class="gold">${sat(pend[addr])}</b>${w.line ? `<span class="pend-when">${esc(w.line)}</span>` : ''}</span>`; })() : '<span class="dim">0</span>'}</td>
         <td class="n" data-label="Last share" style="color:var(--secondary)">${lastShare ? ago(lastShare) : '—'}</td>
       </tr>`;
     }).join('');
@@ -1193,7 +1223,14 @@ const SatWallet = (() => {
         ${tile('Pool owes', `${sat(pending)} <small>SAT</small>`)}
         ${tile('Mining now', live.length ? rate(hash) : '<span class="dim">Offline</span>')}
       </div>
-      <p class="note">Balance is what these addresses can spend now. Unlocking is freshly mined coins waiting out 100 blocks. Pool owes is this address's share of blocks still unlocking, paid out automatically.</p>
+      <p class="note">Balance is what these addresses can spend now. Unlocking is freshly mined coins waiting out 100 blocks. Pool owes is this address's share of blocks the pool found: each piece unlocks once the chain is 100 blocks past its block, then it's paid out automatically${s.minPayout ? ` once you're owed at least ${sat(s.minPayout)} SAT` : ''}.</p>
+      ${(() => {
+        const parts = wAddrs.map((a) => pendingParts(s, a));
+        const locked = parts.flatMap((p) => p.locked).sort((a, b) => a.h - b.h), owed = parts.reduce((t, p) => t + p.owed, 0);
+        if (!locked.length && !owed) return '';
+        const min = s.minPayout;
+        return `<div class="rows owes">${locked.map((p) => `<div class="row"><span><span class="amt">${sat(p.v)} SAT</span><span class="sub2">${p.approx ? ' · from the pool\'s blocks' : ` · from block ${int(p.h)}`}</span></span><span class="sub2" style="text-align:right">unlocks at block ${int(p.at)} · ${blocksAway(p.left)}</span></div>`).join('')}${owed ? `<div class="row"><span><span class="amt">${sat(owed)} SAT</span><span class="sub2"> · unlocked</span></span><span class="sub2" style="text-align:right">${min && owed < min ? `paid once you're owed ${sat(min)} SAT` : 'goes out in the next payout'}</span></div>` : ''}</div>`;
+      })()}
       <div class="wallet-cols">
         <div><h3>Coins${coinsKnown ? ` · ${utxos.length}` : ''}</h3>
           ${!coinsKnown ? '<div class="empty" style="text-align:left">Reading the chain…</div>'

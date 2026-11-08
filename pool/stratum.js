@@ -264,7 +264,18 @@ function payoutState() {
   const settled = { ...(p.settled || {}) };
   // payouts.json from before rounds.json existed keeps each round's status inline
   for (const r of p.rounds || []) if (r.status && r.status !== "immature") settled[roundId(r)] = r.status;
-  return { owed: p.owed || {}, paid: p.paid || [], settled, resumedAt: p.resumedAt || null };
+  return { owed: p.owed || {}, paid: p.paid || [], settled, resumedAt: p.resumedAt || null, minPayout: p.minPayout ?? null };
+}
+
+function pendingDetail(p = payoutState()) {
+  const out = {};
+  const at = (a) => (out[a] ||= { owed: 0, locked: [] });
+  for (const [a, v] of Object.entries(p.owed)) if (v > 0) at(a).owed = round8(v);
+  for (const r of db.rounds) {
+    if (p.settled[roundId(r)]) continue;
+    for (const [a, v] of Object.entries(r.credits)) if (v > 0) at(a).locked.push([r.height, round8(v)]);
+  }
+  return out;
 }
 
 // pending = owed (unlocked, not yet paid) + credits of rounds still maturing
@@ -1113,6 +1124,11 @@ function statsBody() {
     network: { ...network, nextDifficulty: blockDifficulty() },
     reward: template ? template.coinbasevalue / 1e8 : null,
     pending: pendingNow(p),
+    // per address: what is unlocked and waiting to be paid, and each still-locked piece with the block
+    // it came from (it unlocks once the chain has 100 more blocks on top of that one)
+    pendingDetail: pendingDetail(p),
+    minPayout: p.minPayout,
+    maturity: 100,
     rounds: db.rounds.slice(-25).map((r) => ({ height: r.height, status: p.settled[roundId(r)] || "immature", reward: r.reward, scheme: r.scheme || "round" })),
     paid: p.paid.slice(0, 10),
     payoutScheme: { name: "PPLNS", windowBlocks: PPLNS_FACTOR, windowWork: pplnsWork },

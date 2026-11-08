@@ -96,7 +96,8 @@ function load() {
   delete p.pending; // stratum.js works pending out from owed + maturing rounds
   return p;
 }
-const save = (p) => writeJsonAtomic(FILE, p);
+// the pool page shows the payout minimum, so it travels with the state stratum.js reads
+const save = (p) => writeJsonAtomic(FILE, { ...p, minPayout: MIN_PAYOUT });
 
 // Encrypted wallet: unlock for one payment, lock again whatever happens.
 async function withUnlockedWallet(fn) {

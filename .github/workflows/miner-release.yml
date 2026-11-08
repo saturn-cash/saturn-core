@@ -13,7 +13,7 @@ on:
 
 env:
   MINER_REPO: saturn-cash/saturn-miner-v0.3.0
-  MINER_REF: 3329ffbd477b8982950e05d226c62bc263792bdf # Saturn 0.8.9
+  MINER_REF: 91ccadd813f592053c67470c1399eaa3e4834242 # Saturn 0.8.9
   MINER_TAG: miner-v0.8.9
 
 jobs:
@@ -110,6 +110,7 @@ jobs:
 
             **What's new in 0.8.9**
             - **Hyperspace intro.** The first time Saturn opens, and after every update, you get a green hologram trip: leave Earth in a little ship, jump to hyperspeed, and drop out at Saturn as the ship slips into orbit. Other launches keep the quick outline-Saturn intro. Click to skip either one.
+            - Selected text now uses your computer's normal blue highlight.
 
             **New in 0.8.8**
             - **The power button keeps spinning.** Switch screens or hide the window and come back: the coin is still turning right where it would be, instead of starting its spin over.

@@ -13,7 +13,7 @@ on:
 
 env:
   MINER_REPO: saturn-cash/saturn-miner-v0.3.0
-  MINER_REF: dfb8c461a71e60ab6a1fbb2a39ba4d3b9d1210e7 # Saturn 0.8.9
+  MINER_REF: 3329ffbd477b8982950e05d226c62bc263792bdf # Saturn 0.8.9
   MINER_TAG: miner-v0.8.9
 
 jobs:

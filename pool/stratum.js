@@ -1143,15 +1143,27 @@ function statsBody() {
  * Coin / logo design submissions from saturn.boats ("Design the Saturn coin"). The page shrinks and
  * re-encodes the picture in the browser, so what arrives is a plain PNG/JPEG/WebP under 500 KB; it's
  * checked again here by its first bytes (never trusted by its name or type), saved privately in
- * <dataDir>/designs with a line in designs/index.json, and never served back to anyone. Limits: a
- * few per person per hour, and a cap on how many and how much in total.
+ * <dataDir>/designs with a line in designs/index.json, and never served back to anyone. Limits: one
+ * an hour and three a day per person, 20 an hour and 60 a day for everyone, no repeats, and a cap
+ * on how many and how much in total.
  */
 const DESIGNS = dataFile("designs");
 const DESIGN_MAX_BYTES = 500_000;
 const DESIGN_MAX_FILES = Number(config.designMaxFiles ?? 500);
 const DESIGN_MAX_TOTAL = Number(config.designMaxTotalBytes ?? 200_000_000);
-const DESIGN_PER_HOUR = 4;
-const designHits = new Map(); // ip -> [times]
+// Anti-spam. Per person (an IPv4 address, or an IPv6 /64, since one home gets a whole /64): one
+// submission an hour and three a day. For everyone together: 20 an hour and 60 a day, so a flood
+// from many addresses still stops quickly. The same picture twice is turned away. Limits are
+// counted from the saved index, so restarting the pool doesn't reset them. One upload at a time
+// per person, and a slow upload is cut off after 20 seconds.
+const DESIGN_PER_HOUR = Number(config.designPerHour ?? 1);
+const DESIGN_PER_DAY = Number(config.designPerDay ?? 3);
+const DESIGN_ALL_HOUR = Number(config.designAllPerHour ?? 20);
+const DESIGN_ALL_DAY = Number(config.designAllPerDay ?? 60);
+const designBusy = new Set(); // people with an upload in flight
+const personKey = (ip) => (ip.includes(":") ? ip.split(":").slice(0, 4).join(":") + "::/64" : ip);
+const personHash = (ip) => crypto.createHash("sha256").update(personKey(ip) + "saturn-designs").digest("hex").slice(0, 12);
+const waitText = (ms) => (ms > 90 * 60_000 ? `${Math.ceil(ms / 3600_000)} hours` : `${Math.max(1, Math.ceil(ms / 60_000))} minutes`);
 const designOrigin = (req) => {
   const o = String(req.headers.origin || "");
   return WS_ORIGINS.includes(o) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(o) ? o : "";
@@ -1192,9 +1204,43 @@ function handleDesign(req, res) {
   if (req.method !== "POST") return fail(405, "POST a picture");
   if (!origin) return fail(403, "submit from saturn.boats");
   const ip = clientIp(req);
+  const who = personHash(ip);
   const now = Date.now();
-  const recent = (designHits.get(ip) || []).filter((t) => now - t < 3600_000);
-  if (recent.length >= DESIGN_PER_HOUR) return fail(429, "That's a few already this hour, thanks! Try again later.");
+  const index0 = readJson(path.join(DESIGNS, "index.json"), []);
+  const since = (e) => now - Date.parse(e.time);
+  const mine = index0.filter((e) => e.from === who);
+  const mineHour = mine.filter((e) => since(e) < 3600_000);
+  const mineDay = mine.filter((e) => since(e) < 86400_000);
+  const slow = (ms, text) => {
+    res.setHeader("Retry-After", String(Math.ceil(ms / 1000)));
+    return fail(429, text);
+  };
+  if (mineHour.length >= DESIGN_PER_HOUR) {
+    const wait = 3600_000 - Math.min(...mineHour.map(since));
+    return slow(wait, `Thanks! One design an hour per person. You can send another in ${waitText(wait)}.`);
+  }
+  if (mineDay.length >= DESIGN_PER_DAY) {
+    const wait = 86400_000 - Math.max(...mineDay.map(since)) + 0;
+    return slow(wait, `Thanks! That's ${DESIGN_PER_DAY} designs today, the most per person. You can send another in ${waitText(wait)}.`);
+  }
+  const allHour = index0.filter((e) => since(e) < 3600_000).length;
+  const allDay = index0.filter((e) => since(e) < 86400_000).length;
+  if (allHour >= DESIGN_ALL_HOUR || allDay >= DESIGN_ALL_DAY) return slow(allHour >= DESIGN_ALL_HOUR ? 3600_000 : 6 * 3600_000, "Lots of designs coming in right now. Please try again a little later.");
+  if (designBusy.has(who)) return fail(429, "One upload at a time, please.");
+  designBusy.add(who);
+  let finished = false;
+  const release = () => {
+    if (!finished) {
+      finished = true;
+      designBusy.delete(who);
+    }
+  };
+  res.on("close", release);
+  const cutoff = setTimeout(() => {
+    if (!res.writableEnded) fail(408, "That upload took too long. Try again.");
+    req.destroy();
+  }, 20_000);
+  res.on("close", () => clearTimeout(cutoff));
   const chunks = [];
   let size = 0;
   let tooBig = false;
@@ -1207,15 +1253,18 @@ function handleDesign(req, res) {
   });
   req.on("end", () => {
     if (tooBig) return;
+    if (res.writableEnded) return;
     const buf = Buffer.concat(chunks);
     const kind = imageKind(buf);
     if (!kind) return fail(415, "send a PNG, JPEG or WebP picture");
+    const sum = crypto.createHash("sha256").update(buf).digest("hex");
     try {
       fs.mkdirSync(DESIGNS, { recursive: true, mode: 0o750 });
       const indexFile = path.join(DESIGNS, "index.json");
       const index = readJson(indexFile, []);
       const total = index.reduce((t, e) => t + (e.bytes || 0), 0);
       if (index.length >= DESIGN_MAX_FILES || total + buf.length > DESIGN_MAX_TOTAL) return fail(507, "Submissions are full right now, thanks for trying!");
+      if (index.some((e) => e.sha256 === sum)) return fail(409, "That exact picture was already sent in. Thanks!");
       const stamp = new Date(now).toISOString().replace(/[:.]/g, "-");
       const file = `${stamp}-${crypto.randomBytes(3).toString("hex")}.${kind}`;
       fs.writeFileSync(path.join(DESIGNS, file), buf, { mode: 0o640 });
@@ -1226,12 +1275,11 @@ function handleDesign(req, res) {
         name: cleanText(req.headers["x-design-name"], 60),
         contact: cleanText(req.headers["x-design-contact"], 120),
         note: cleanText(req.headers["x-design-note"], 500),
-        from: crypto.createHash("sha256").update(ip + "saturn-designs").digest("hex").slice(0, 12),
+        from: who,
+        sha256: sum,
       });
       fs.writeFileSync(indexFile + ".tmp", JSON.stringify(index, null, 1));
       fs.renameSync(indexFile + ".tmp", indexFile);
-      recent.push(now);
-      designHits.set(ip, recent);
       console.log(`design submitted: ${file} (${buf.length} bytes)`);
       res.end(JSON.stringify({ ok: true }));
     } catch (e) {
@@ -1240,10 +1288,6 @@ function handleDesign(req, res) {
     }
   });
 }
-setInterval(() => {
-  const old = Date.now() - 3600_000;
-  for (const [ip, ts] of designHits) if (!ts.some((t) => t > old)) designHits.delete(ip);
-}, 600_000);
 
 /*
  * The pool operator's private gallery of submissions: /designs/review?key=<key>. The key is made once

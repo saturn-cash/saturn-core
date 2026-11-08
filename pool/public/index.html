@@ -409,7 +409,14 @@ footer a:hover { color: var(--secondary); }
 .pend-when { display: block; margin-top: 2px; font-size: 11px; font-weight: 400; color: var(--tertiary); white-space: nowrap; }
 .pend-note { margin: 14px 4px 2px; max-width: 860px; }
 .pend-note b { color: var(--secondary); font-weight: 600; }
-.rows.owes { margin-top: 10px; }
+.owes-box { margin-top: 10px; border-radius: 10px; background: var(--fill); box-shadow: inset 0 0 0 .5px var(--separator); }
+.owes-box > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 10px 12px; font-size: 12.5px; color: var(--secondary); user-select: none; }
+.owes-box > summary::-webkit-details-marker { display: none; }
+.owes-box > summary::before { content: ''; width: 6px; height: 6px; flex: none; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; rotate: -45deg; transition: rotate .2s ease; }
+.owes-box[open] > summary::before { rotate: 45deg; }
+.owes-box > summary b { color: var(--label); font-weight: 600; }
+.owes-box > summary:hover { color: var(--label); }
+.rows.owes { margin: 0 6px 6px; max-height: 360px; overflow-y: auto; }
 .rows.owes .row { justify-content: space-between; gap: 12px; }
 /* ---------------- block found ----------------
    When the pool as a whole finds a block (not a solo block, never for shares): green pings roll out
@@ -995,6 +1002,7 @@ const SatWallet = (() => {
     const imm = (s.rounds || []).filter((r) => r.status === 'immature').map((r) => r.height).sort((a, b) => a - b);
     return v && imm.length ? { owed: 0, locked: [piece(imm[0], v, true)] } : { owed: v, locked: [] };
   }
+  let owesOpen = false; // the wallet's unlocking list starts folded and stays as you leave it
   const blocksAway = (n) => n > 0 ? `${int(n)} more block${n === 1 ? '' : 's'}, about ${duration(n * 600)}` : 'unlocking now';
   function pendingWhen(s, parts) {
     const min = s.minPayout;
@@ -1228,7 +1236,9 @@ const SatWallet = (() => {
         const locked = parts.flatMap((p) => p.locked).sort((a, b) => a.h - b.h), owed = parts.reduce((t, p) => t + p.owed, 0);
         if (!locked.length && !owed) return '';
         const min = s.minPayout;
-        return `<div class="rows owes">${locked.map((p) => `<div class="row"><span><span class="amt">${sat(p.v)} SAT</span><span class="sub2">${p.approx ? ' · from the pool\'s blocks' : ` · from block ${int(p.h)}`}</span></span><span class="sub2" style="text-align:right">unlocks at block ${int(p.at)} · ${blocksAway(p.left)}</span></div>`).join('')}${owed ? `<div class="row"><span><span class="amt">${sat(owed)} SAT</span><span class="sub2"> · unlocked</span></span><span class="sub2" style="text-align:right">${min && owed < min ? `paid once you're owed ${sat(min)} SAT` : 'goes out in the next payout'}</span></div>` : ''}</div>`;
+        const sumLocked = locked.reduce((t, p) => t + p.v, 0);
+        const head = locked.length ? `<b>${int(locked.length)} piece${locked.length === 1 ? '' : 's'} unlocking</b> · ${sat(sumLocked)} SAT · next at block ${int(locked[0].at)} (${blocksAway(locked[0].left)})` : `<b>${sat(owed)} SAT unlocked</b>`;
+        return `<details class="owes-box" id="owes-box"${owesOpen ? ' open' : ''}><summary>${head}</summary><div class="rows owes">${locked.map((p) => `<div class="row"><span><span class="amt">${sat(p.v)} SAT</span><span class="sub2">${p.approx ? ' · from the pool\'s blocks' : ` · from block ${int(p.h)}`}</span></span><span class="sub2" style="text-align:right">unlocks at block ${int(p.at)} · ${blocksAway(p.left)}</span></div>`).join('')}${owed ? `<div class="row"><span><span class="amt">${sat(owed)} SAT</span><span class="sub2"> · unlocked</span></span><span class="sub2" style="text-align:right">${min && owed < min ? `paid once you're owed ${sat(min)} SAT` : 'goes out in the next payout'}</span></div>` : ''}</div></details>`;
       })()}
       <div class="wallet-cols">
         <div><h3>Coins${coinsKnown ? ` · ${utxos.length}` : ''}</h3>
@@ -1255,6 +1265,8 @@ const SatWallet = (() => {
         </div>
       </div>`;
     $('w-forget').addEventListener('click', forgetWallet);
+    const ob = $('owes-box');
+    if (ob) ob.addEventListener('toggle', () => { owesOpen = ob.open; });
   }
   $('w-form').addEventListener('submit', (e) => { e.preventDefault(); loadWallet(parseAddrs($('w-input').value)); });
   $('lookup').addEventListener('submit', (e) => { e.preventDefault(); loadWallet(parseAddrs($('addr').value), { scroll: true }); });

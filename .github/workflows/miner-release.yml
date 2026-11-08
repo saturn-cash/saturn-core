@@ -13,8 +13,8 @@ on:
 
 env:
   MINER_REPO: saturn-cash/saturn-miner-v0.3.0
-  MINER_REF: f335fff238a7d754c972cf91363f47c63b0b3199 # Saturn 0.8.7
-  MINER_TAG: miner-v0.8.7
+  MINER_REF: 5ed75b2acf4d9517e3afb860be9ef881e3a5c003 # Saturn 0.8.8
+  MINER_TAG: miner-v0.8.8
 
 jobs:
   build:
@@ -70,11 +70,32 @@ jobs:
         working-directory: miner
         run: pnpm install --frozen-lockfile
 
+      # Auto-update: when the repository has the TAURI_SIGNING_PRIVATE_KEY secret, the update files are
+      # signed and latest.json (what installed apps read to find and check the newest version) is
+      # published with the release. Without the secret the release still builds, just without them.
+      - name: Sign updates when the signing key is set
+        id: sign
+        shell: bash
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -n "$KEY" ]; then
+            node -e "const fs=require('fs'),f='miner/src-tauri/tauri.conf.json',c=JSON.parse(fs.readFileSync(f,'utf8'));c.bundle.createUpdaterArtifacts=true;fs.writeFileSync(f,JSON.stringify(c,null,2)+'\\n')"
+            echo "on=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set, so this release has no auto-update files"
+            echo "on=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: miner
+          includeUpdaterJson: ${{ steps.sign.outputs.on }}
+          updaterJsonPreferNsis: true
           tagName: ${{ env.MINER_TAG }}
           releaseName: 'Saturn v__VERSION__'
           releaseCommitish: ${{ github.sha }}
@@ -87,7 +108,10 @@ jobs:
             - **Mac (Intel)**: the `x64.dmg`
             - **Linux**: the `.AppImage` (any distro), `.deb` (Ubuntu/Debian) or `.rpm` (Fedora)
 
-            **What's new in 0.8.7**
+            **What's new in 0.8.8**
+            - **The power button keeps spinning.** Switch screens or hide the window and come back: the coin is still turning right where it would be, instead of starting its spin over.
+
+            **New in 0.8.7**
             - **Hologram power button.** The Saturn coin is the power button now: grey and still when off, it lights up green and starts spinning when you mine. There's a little power button next to it too, like the sound one.
             - **Hologram flight map and peers radar** in the same green look.
             - **Rings.** 1 SAT = 100,000,000 rings, the smallest piece of a SAT. Your wallet shows both.
